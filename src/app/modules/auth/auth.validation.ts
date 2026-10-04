@@ -28,7 +28,7 @@ const createUserValidation = z.object({
 
 const loginUserValidation = z.object({
     body: z.object({
-        loginMethod: z.string().min(1, { message: "Login method is required" }),
+        email: z.string().min(1, { message: "Login method is required" }),
         password: z.string().min(1, { message: "Password is required" })
     })
 }); 

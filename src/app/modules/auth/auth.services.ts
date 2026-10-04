@@ -7,11 +7,12 @@ import bcrypt from 'bcrypt';
 import config from "../../config/index.js";
 import type { SignOptions } from "jsonwebtoken";
 import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
+import QueryBuilder from "../../builder/QueryBuilder.js";
 
 // const createUserIntoDB = async (userData: TUser) => {
-const createUserIntoDB = async (file:any,userData: TUser): Promise<TUser> => {
+const createUserIntoDB = async (file: any, userData: TUser): Promise<TUser> => {
     userData.userId = await generateUserId();
-    if(file){
+    if (file) {
         const imgName = `${userData?.fullName}-${userData?.userId}-img`;
         const filePath = file?.path;
         const image = await uploadImageToCloudinary(imgName, filePath);
@@ -19,22 +20,22 @@ const createUserIntoDB = async (file:any,userData: TUser): Promise<TUser> => {
     } else {
         userData.profilePicture = userData?.profilePicture || '';
     }
-    return userData;
-    // const result = await UserModel.create(userData);
-    // return result;
+    // return userData;
+    const result = await UserModel.create(userData);
+    return result;
 }
 
 //login
-const loginUser = async (loginMethod: string, password: string): Promise<{
+const loginUser = async (email: string, password: string): Promise<{
     accessToken: string;
     refreshToken: string;
     emailVerified?: boolean;
     phoneVerified?: boolean;
 }> => {
     let user;
-    const byEmail = await UserModel.findOne({ phone: loginMethod });
+    const byEmail = await UserModel.findOne({ email });
     if (!byEmail) {
-        const byPhone = await UserModel.findOne({ phone: loginMethod });
+        const byPhone = await UserModel.findOne({ phone: email });
         if (!byPhone) {
             throw new AppError(status.NOT_FOUND, 'User not found!');
         }
@@ -65,7 +66,50 @@ const loginUser = async (loginMethod: string, password: string): Promise<{
     }
 }
 
+//get profile
+const getProfile = async (userId: string): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId }).select('-password');
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    return user;
+}
+
+//get all users (paginated)
+const getAllUsers = async (query: Record<string, unknown>) => {
+    const searchFields = ['fullName', 'email', 'phone', 'userId'];
+    const userQuery = new QueryBuilder(UserModel.find().select('-password'), query)
+        .search(searchFields)
+        .filter()
+        .sort()
+        .paginate()
+        .fields();
+
+    const meta = await userQuery.countTotal();
+    const result = await userQuery.modelQuery.lean();
+
+    // if (!result || result.length === 0) {
+    //     throw new AppError(status.NOT_FOUND, 'No users found!');
+    // }
+    return {
+        meta,
+        users: result
+    };
+};
+
+//get a single user's full details by userId
+const getUserById = async (userId: string): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId }).select('-password');
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    return user;
+};
+
 export const UserServices = {
     createUserIntoDB,
-    loginUser
+    loginUser,
+    getProfile,
+    getAllUsers,
+    getUserById
 }

@@ -2,6 +2,7 @@ import { model, Schema } from "mongoose";
 import { SystemRoles } from "./auth.constants.js";
 import type { TUser } from "./auth.interface.js";
 import bcrypt from 'bcrypt';
+import config from "../../config/index.js";
 
 const userSchema = new Schema<TUser>(
     {
@@ -56,4 +57,8 @@ userSchema.statics.isJWTIssuedBeforePasswordChanged = async function (passwordCh
     return passChangeTimeInMS > jwtIssuedTime;
 }
 
+//pre hook to hash password before saving to database
+userSchema.pre('save', async function () {
+    this.password = await bcrypt.hash(this.password, Number(config.bcrypt_salt_round));
+})
 export const UserModel = model<TUser>('User', userSchema);

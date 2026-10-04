@@ -24,7 +24,7 @@ export type TUser = {
     emailVerified: boolean;
     phoneVerified: boolean;
     isActive: boolean;
-    systemRole?: TSystemRole;
+    systemRole?: string;
     lastLogin?: Date;
     isDeleted: boolean
 }

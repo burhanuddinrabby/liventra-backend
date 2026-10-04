@@ -3,6 +3,8 @@ import { UserController } from './auth.controller.js';
 import { upload } from '../../utils/uploadImage.js';
 import validateRequest from '../../middlewares/validateRequest.js';
 import { userValidations } from './auth.validation.js';
+import auth from '../../middlewares/auth.js';
+import { SystemRoles } from './auth.constants.js';
 const userRouter = express.Router();
 
 //POST /api/v1/users/register-user
@@ -18,11 +20,17 @@ userRouter.post('/register-user', upload.single('file'), (req: Request, res: Res
 //POST /api/v1/users/login
 userRouter.post('/login', validateRequest(userValidations.loginUserValidation), UserController.loginUser);
 
-// userRouter.post('/get-me', auth(SystemRoles.ADMIN as TSystemRole), UserController.createUser);
+// GET /api/v1/users/profile
+userRouter.get('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), UserController.getProfile);
+
+// GET /api/v1/users (paginated list) - admin & superAdmin only
+userRouter.get('/', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.getAllUsers);
+
+// GET /api/v1/users/:id (full user details) - admin & superAdmin only
+userRouter.get('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.getUserById);
 
 /* 
-- POST /api/v1/users/login
-- GET /api/v1/users/profile
+
 - PUT /api/v1/users/profile
 - PATCH /api/v1/users/profile-picture
 - PUT /api/v1/users/change-password

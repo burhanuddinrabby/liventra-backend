@@ -6,13 +6,12 @@
 
 import status from "http-status";
 import AppError from "../errors/AppError.js";
-import type { TSystemRole } from "../modules/auth/auth.interface.js";
 import catchAsync from "../utils/catchAsync.js";
 import config from "../config/index.js";
 import type { JwtPayload } from "jsonwebtoken";
 import jwt from "jsonwebtoken";
 
-const auth = (...roles: TSystemRole[]) => {
+const auth = (...roles: string[]) => {
     return catchAsync(async (req, res, next) => {
         const token = req.headers.authorization?.split(" ")[1]
         if (!token) {
@@ -22,6 +21,7 @@ const auth = (...roles: TSystemRole[]) => {
         let decoded;
         try {
             decoded = jwt.verify(token, config.jwt_access_token as string) as JwtPayload;
+        // eslint-disable-next-line no-unused-vars
         } catch (error) {
             throw new AppError(status.UNAUTHORIZED, 'You\'re not authorized!');
         }
