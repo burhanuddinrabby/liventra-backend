@@ -75,6 +75,37 @@ const getProfile = async (userId: string): Promise<TUser> => {
     return user;
 }
 
+//update basic personal information (fullName, gender, dateOfBirth, address)
+const updateProfile = async (userId: string, payload: Partial<TUser>): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId });
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    const { address, ...remaining } = payload;
+
+    const modifiedData: Record<string, unknown> = { ...remaining };
+    if (address && Object.keys(address).length) {
+        for (const [key, value] of Object.entries(address)) {
+            modifiedData[`address.${key}`] = value
+        }
+    }
+    if (payload.dateOfBirth) {
+        payload.dateOfBirth = new Date(payload.dateOfBirth as string | Date);
+    }
+    //if req user is not the actual user taken from token
+    // if (user.userId !== payload.userId) {
+    //     throw new AppError(status.FORBIDDEN, 'You are not authorized to update this profile!');
+    // }
+    const updated = await UserModel.findOneAndUpdate({ userId }, modifiedData, {
+        new: true,
+        // runValidators: true
+    }).select('-password');
+    if (!updated) {
+        throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
+    }
+    return updated;
+}
+
 //get all users (paginated)
 const getAllUsers = async (query: Record<string, unknown>) => {
     const searchFields = ['fullName', 'email', 'phone', 'userId'];
@@ -110,6 +141,7 @@ export const UserServices = {
     createUserIntoDB,
     loginUser,
     getProfile,
+    updateProfile,
     getAllUsers,
     getUserById
 }

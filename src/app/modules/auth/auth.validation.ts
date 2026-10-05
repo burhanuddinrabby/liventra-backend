@@ -31,8 +31,25 @@ const loginUserValidation = z.object({
         email: z.string().min(1, { message: "Login method is required" }),
         password: z.string().min(1, { message: "Password is required" })
     })
-}); 
+});
+
+const updateProfileValidation = z.object({
+    body: z.object({
+        fullName: z.string().min(1, { message: "Full name is required" }).optional(),
+        gender: z.enum(['male', 'female', 'other']).optional(),
+        dateOfBirth: z.string().optional(),
+        address: z.object({
+            village: z.string().optional(),
+            postOffice: z.string().optional(),
+            upazila: z.string().optional(),
+            district: z.string().optional(),
+            country: z.string().optional(),
+        }).optional(),
+    }).refine((values) => Object.keys(values).length > 0, { message: "No data provided to update!" })
+});
+
 export const userValidations = {
     createUserValidation,
-    loginUserValidation 
+    loginUserValidation,
+    updateProfileValidation
 };

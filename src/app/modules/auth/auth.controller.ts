@@ -3,6 +3,7 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import status from "http-status";
 import { UserServices } from "./auth.services.js";
+import config from "../../config/index.js";
 
 const createUser = catchAsync(async (req: Request, res: Response) => {
     const { body } = req;
@@ -19,6 +20,14 @@ const loginUser = catchAsync(async (req: Request, res: Response) => {
     //loginMethod can be email or phone (direct value from request body)
     const { email, password } = req.body;
     const { accessToken, refreshToken, emailVerified, phoneVerified } = await UserServices.loginUser(email, password);
+
+    res.cookie('refreshToken', refreshToken, {
+        secure: config.node_env === 'production',
+        httpOnly: true,
+        // sameSite: 'none',
+        // maxAge: 1000 * 60 * 60 * 24 * 365
+    });
+
     sendResponse(res, {
         statusCode: status.OK,
         success: true,
@@ -38,6 +47,17 @@ const getProfile = catchAsync(async (req: Request, res: Response) => {
         statusCode: status.OK,
         success: true,
         message: "Profile fetched successfully!!",
+        data: user
+    });
+});
+
+const updateProfile = catchAsync(async (req: Request, res: Response) => {
+    const user = await UserServices.updateProfile(req.user.userId, req.body);
+    
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "Profile updated successfully!!",
         data: user
     });
 });
@@ -68,6 +88,7 @@ export const UserController = {
     createUser,
     loginUser,
     getProfile,
+    updateProfile,
     getAllUsers,
     getUserById
 };
