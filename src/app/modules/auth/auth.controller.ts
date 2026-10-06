@@ -62,6 +62,17 @@ const updateProfile = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const updateProfilePicture = catchAsync(async (req: Request, res: Response) => {
+    const user = await UserServices.updateProfilePicture(req.user.userId, req?.file);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "Profile picture updated successfully!!",
+        data: user
+    });
+});
+
 const getAllUsers = catchAsync(async (req: Request, res: Response) => {
     const { meta, users } = await UserServices.getAllUsers(req.query as Record<string, string>);
 
@@ -89,6 +100,7 @@ export const UserController = {
     loginUser,
     getProfile,
     updateProfile,
+    updateProfilePicture,
     getAllUsers,
     getUserById
 };

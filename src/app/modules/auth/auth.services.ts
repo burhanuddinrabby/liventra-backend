@@ -106,6 +106,28 @@ const updateProfile = async (userId: string, payload: Partial<TUser>): Promise<T
     return updated;
 }
 
+//update or change profile picture
+const updateProfilePicture = async (userId: string, file: any): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId });
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    if (!file) {
+        throw new AppError(status.BAD_REQUEST, 'No image file provided!');
+    }
+    const imgName = `${user.fullName}-${userId}-img`;
+    const image = await uploadImageToCloudinary(imgName, file.path);
+    const updated = await UserModel.findOneAndUpdate(
+        { userId },
+        { profilePicture: image?.secure_url as string },
+        { new: true }
+    ).select('-password');
+    if (!updated) {
+        throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
+    }
+    return updated;
+}
+
 //get all users (paginated)
 const getAllUsers = async (query: Record<string, unknown>) => {
     const searchFields = ['fullName', 'email', 'phone', 'userId'];
@@ -142,6 +164,7 @@ export const UserServices = {
     loginUser,
     getProfile,
     updateProfile,
+    updateProfilePicture,
     getAllUsers,
     getUserById
 }
