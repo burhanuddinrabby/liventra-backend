@@ -61,4 +61,11 @@ userSchema.statics.isJWTIssuedBeforePasswordChanged = async function (passwordCh
 userSchema.pre('save', async function () {
     this.password = await bcrypt.hash(this.password, Number(config.bcrypt_salt_round));
 })
+
+//only non-deleted (isDeleted: false) users will be returned while searching (find / findOne)
+userSchema.pre(['find', 'findOne'], function () {
+    this.where({
+        isDeleted: false
+    });
+})
 export const UserModel = model<TUser>('User', userSchema);

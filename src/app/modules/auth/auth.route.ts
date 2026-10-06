@@ -42,12 +42,16 @@ userRouter.get('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserCon
 // PATCH /api/v1/users/:id/system-role - superAdmin only
 userRouter.patch('/:id/system-role', auth(SystemRoles.SUPER_ADMIN), validateRequest(userValidations.updateSystemRoleValidation), UserController.updateSystemRole);
 
+// PATCH /api/v1/users/:id/toggle-active - admin & superAdmin only
+userRouter.patch('/:id/toggle-active', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.toggleActive);
+
+// DELETE /api/v1/users/:id - admin & superAdmin only
+userRouter.delete('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.deleteUser);
+
 /* 
 
 - POST /api/v1/users/forgot-password
 - POST /api/v1/users/verify-email 
 - POST /api/v1/users/verify-phone
-- PATCH /api/v1/users/:id/toggle-active
-- DELETE /api/v1/users/:id
 */
 export { userRouter };

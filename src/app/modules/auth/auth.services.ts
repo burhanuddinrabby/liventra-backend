@@ -167,6 +167,36 @@ const updateSystemRole = async (userId: string, systemRole: string): Promise<TUs
     return updated;
 }
 
+//activate / deactivate an account
+const toggleActive = async (userId: string): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId });
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    const updated = await UserModel.findOneAndUpdate(
+        { userId },
+        { isActive: !user.isActive },
+        { new: true }
+    ).select('-password');
+    if (!updated) {
+        throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
+    }
+    return updated;
+}
+
+//soft delete a user account
+const deleteUser = async (userId: string): Promise<TUser> => {
+    const updated = await UserModel.findOneAndUpdate(
+        { userId },
+        { isActive: false, isDeleted: true },
+        { new: true }
+    ).select('-password');
+    if (!updated) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    return updated;
+}
+
 //get all users (paginated)
 const getAllUsers = async (query: Record<string, unknown>) => {
     const searchFields = ['fullName', 'email', 'phone', 'userId'];
@@ -206,6 +236,8 @@ export const UserServices = {
     updateProfilePicture,
     changePassword,
     updateSystemRole,
+    toggleActive,
+    deleteUser,
     getAllUsers,
     getUserById
 }

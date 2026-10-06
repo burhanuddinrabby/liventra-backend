@@ -94,6 +94,28 @@ const updateSystemRole = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const toggleActive = catchAsync(async (req: Request, res: Response) => {
+    const user = await UserServices.toggleActive(req.params.id as string);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "User active status updated successfully!!",
+        data: user
+    });
+});
+
+const deleteUser = catchAsync(async (req: Request, res: Response) => {
+    const user = await UserServices.deleteUser(req.params.id as string);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "User deleted successfully!!",
+        data: user
+    });
+});
+
 const getAllUsers = catchAsync(async (req: Request, res: Response) => {
     const { meta, users } = await UserServices.getAllUsers(req.query as Record<string, string>);
 
@@ -124,6 +146,8 @@ export const UserController = {
     updateProfilePicture,
     changePassword,
     updateSystemRole,
+    toggleActive,
+    deleteUser,
     getAllUsers,
     getUserById
 };

@@ -1,12 +1,9 @@
 import { UserModel } from "./auth.model.js";
-import { SystemRoles } from "./auth.constants.js";
 import jwt, { type JwtPayload, type SignOptions } from "jsonwebtoken";
 
 const lastUserId = async () => {
     const lastUser = await UserModel.findOne(
-        {
-            systemRole: SystemRoles.USER
-        } as any,
+        {} as any,
         {
             userId: 1,
             _id: 0
