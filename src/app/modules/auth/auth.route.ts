@@ -27,6 +27,7 @@ userRouter.get('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, Syst
 userRouter.put('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), validateRequest(userValidations.updateProfileValidation), UserController.updateProfile);
 
 // PATCH /api/v1/users/profile-picture
+//file or url as body
 userRouter.patch('/profile-picture', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), upload.single('file'), UserController.updateProfilePicture);
 
 // PUT /api/v1/users/change-password
@@ -38,14 +39,14 @@ userRouter.get('/', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserContro
 // GET /api/v1/users/:id (full user details) - admin & superAdmin only
 userRouter.get('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.getUserById);
 
+// PATCH /api/v1/users/:id/system-role - superAdmin only
+userRouter.patch('/:id/system-role', auth(SystemRoles.SUPER_ADMIN), validateRequest(userValidations.updateSystemRoleValidation), UserController.updateSystemRole);
+
 /* 
 
 - POST /api/v1/users/forgot-password
 - POST /api/v1/users/verify-email 
 - POST /api/v1/users/verify-phone
-- GET /api/v1/users 
-- GET /api/v1/users/:id
-- PATCH /api/v1/users/:id/system-role
 - PATCH /api/v1/users/:id/toggle-active
 - DELETE /api/v1/users/:id
 */

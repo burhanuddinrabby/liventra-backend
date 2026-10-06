@@ -107,25 +107,36 @@ const updateProfile = async (userId: string, payload: Partial<TUser>): Promise<T
 }
 
 //update or change profile picture
-const updateProfilePicture = async (userId: string, file: any): Promise<TUser> => {
+const updateProfilePicture = async (userId: string, file: any, url: string | undefined): Promise<TUser> => {
     const user = await UserModel.findOne({ userId });
     if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
-    if (!file) {
-        throw new AppError(status.BAD_REQUEST, 'No image file provided!');
+    if (file) {
+        const imgName = `${user.fullName}-${userId}-img`;
+        const image = await uploadImageToCloudinary(imgName, file.path);
+        const updated = await UserModel.findOneAndUpdate(
+            { userId },
+            { profilePicture: image?.secure_url as string },
+            { new: true }
+        ).select('-password');
+        if (!updated) {
+            throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
+        }
+        return updated;
     }
-    const imgName = `${user.fullName}-${userId}-img`;
-    const image = await uploadImageToCloudinary(imgName, file.path);
-    const updated = await UserModel.findOneAndUpdate(
-        { userId },
-        { profilePicture: image?.secure_url as string },
-        { new: true }
-    ).select('-password');
-    if (!updated) {
-        throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
+    if (url) {
+        const updated = await UserModel.findOneAndUpdate(
+            { userId },
+            { profilePicture: url },
+            { new: true }
+        ).select('-password');
+        if (!updated) {
+            throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
+        }
+        return updated;
     }
-    return updated;
+    throw new AppError(status.BAD_REQUEST, 'No file or URL provided for profile picture update!');
 }
 
 //change password (after validating current password)
@@ -141,6 +152,19 @@ const changePassword = async (userId: string, payload: { currentPassword: string
     //pre-save hook hashes the password
     user.password = payload.newPassword;
     await user.save();
+}
+
+//update system-level role (user, admin, superAdmin)
+const updateSystemRole = async (userId: string, systemRole: string): Promise<TUser> => {
+    const updated = await UserModel.findOneAndUpdate(
+        { userId },
+        { systemRole },
+        { new: true }
+    ).select('-password');
+    if (!updated) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    return updated;
 }
 
 //get all users (paginated)
@@ -181,6 +205,7 @@ export const UserServices = {
     updateProfile,
     updateProfilePicture,
     changePassword,
+    updateSystemRole,
     getAllUsers,
     getUserById
 }

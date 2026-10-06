@@ -63,7 +63,7 @@ const updateProfile = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateProfilePicture = catchAsync(async (req: Request, res: Response) => {
-    const user = await UserServices.updateProfilePicture(req.user.userId, req?.file);
+    const user = await UserServices.updateProfilePicture(req.user.userId, req?.file, req?.body?.url);
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -80,6 +80,17 @@ const changePassword = catchAsync(async (req: Request, res: Response) => {
         statusCode: status.OK,
         success: true,
         message: "Password changed successfully!!"
+    });
+});
+
+const updateSystemRole = catchAsync(async (req: Request, res: Response) => {
+    const user = await UserServices.updateSystemRole(req.params.id as string, req.body.systemRole);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "System role updated successfully!!",
+        data: user
     });
 });
 
@@ -112,6 +123,7 @@ export const UserController = {
     updateProfile,
     updateProfilePicture,
     changePassword,
+    updateSystemRole,
     getAllUsers,
     getUserById
 };

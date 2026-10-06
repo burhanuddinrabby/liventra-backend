@@ -4,6 +4,7 @@ import config from "./app/config/index.js";
 import AppError from "./app/errors/AppError.js";
 import status from "http-status";
 import mongoose from "mongoose";
+import seedSuperAdmin from "./app/DB/index.js";
 
 let server: Server;
 
@@ -13,7 +14,7 @@ async function main() {
         throw new AppError(status.NOT_FOUND, 'Mongodb url environment variable is not defined');
     }
     await mongoose.connect(mongoUrl);
-    // seedSuperAdmin();
+    seedSuperAdmin();
     server = app.listen(config.port, () => {
         console.log(`The app listening on port ${config.port}`);
     });

@@ -57,9 +57,16 @@ const changePasswordValidation = z.object({
     })
 });
 
+const updateSystemRoleValidation = z.object({
+    body: z.object({
+        systemRole: z.enum(Object.values(SystemRoles), { message: "System role must be one of: user, admin, superAdmin" }),
+    })
+});
+
 export const userValidations = {
     createUserValidation,
     loginUserValidation,
     updateProfileValidation,
-    changePasswordValidation
+    changePasswordValidation,
+    updateSystemRoleValidation
 };
