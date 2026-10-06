@@ -14,15 +14,15 @@ const lastUserId = async () => {
     ).sort({
         createdAt: -1
     }).lean();
-    const lastDigits: string = lastUser?.userId?.split('-')[2] || '00000';
-    return lastDigits;
+    return lastUser?.userId?.split('-')[2] || '00000';
 };
 
 export const generateUserId = async (): Promise<string> => {
     const currentId = await lastUserId();
     let incrementId = (Number(currentId) + 1).toString().padStart(4, '0');
     const currentYear = new Date().getFullYear();
-    incrementId = `USR-${currentYear}-${incrementId}`
+    const stringYearTwoDigits = currentYear.toString().slice(-2);
+    incrementId = `U-${stringYearTwoDigits}-${incrementId}`
     return incrementId;
 }
 
