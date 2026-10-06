@@ -128,6 +128,21 @@ const updateProfilePicture = async (userId: string, file: any): Promise<TUser> =
     return updated;
 }
 
+//change password (after validating current password)
+const changePassword = async (userId: string, payload: { currentPassword: string; newPassword: string }): Promise<void> => {
+    const user = await UserModel.findOne({ userId });
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    const isCurrentPasswordValid = await bcrypt.compare(payload.currentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+        throw new AppError(status.FORBIDDEN, 'Current password is incorrect!');
+    }
+    //pre-save hook hashes the password
+    user.password = payload.newPassword;
+    await user.save();
+}
+
 //get all users (paginated)
 const getAllUsers = async (query: Record<string, unknown>) => {
     const searchFields = ['fullName', 'email', 'phone', 'userId'];
@@ -165,6 +180,7 @@ export const UserServices = {
     getProfile,
     updateProfile,
     updateProfilePicture,
+    changePassword,
     getAllUsers,
     getUserById
 }

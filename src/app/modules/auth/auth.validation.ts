@@ -48,8 +48,18 @@ const updateProfileValidation = z.object({
     }).refine((values) => Object.keys(values).length > 0, { message: "No data provided to update!" })
 });
 
+const changePasswordValidation = z.object({
+    body: z.object({
+        currentPassword: z.string().min(1, { message: "Current password is required" }),
+        newPassword: z.string().min(8, { message: "New password must be at least 8 characters long" }),
+    }).refine((values) => values.currentPassword !== values.newPassword, {
+        message: "New password must be different from the current password!"
+    })
+});
+
 export const userValidations = {
     createUserValidation,
     loginUserValidation,
-    updateProfileValidation
+    updateProfileValidation,
+    changePasswordValidation
 };

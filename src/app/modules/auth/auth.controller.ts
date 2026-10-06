@@ -73,6 +73,16 @@ const updateProfilePicture = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const changePassword = catchAsync(async (req: Request, res: Response) => {
+    await UserServices.changePassword(req.user.userId, req.body);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "Password changed successfully!!"
+    });
+});
+
 const getAllUsers = catchAsync(async (req: Request, res: Response) => {
     const { meta, users } = await UserServices.getAllUsers(req.query as Record<string, string>);
 
@@ -101,6 +111,7 @@ export const UserController = {
     getProfile,
     updateProfile,
     updateProfilePicture,
+    changePassword,
     getAllUsers,
     getUserById
 };

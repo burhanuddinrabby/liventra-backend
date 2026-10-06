@@ -29,6 +29,9 @@ userRouter.put('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, Syst
 // PATCH /api/v1/users/profile-picture
 userRouter.patch('/profile-picture', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), upload.single('file'), UserController.updateProfilePicture);
 
+// PUT /api/v1/users/change-password
+userRouter.put('/change-password', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), validateRequest(userValidations.changePasswordValidation), UserController.changePassword);
+
 // GET /api/v1/users (paginated list) - admin & superAdmin only
 userRouter.get('/', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.getAllUsers);
 
@@ -37,7 +40,6 @@ userRouter.get('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserCon
 
 /* 
 
-- PUT /api/v1/users/change-password
 - POST /api/v1/users/forgot-password
 - POST /api/v1/users/verify-email 
 - POST /api/v1/users/verify-phone
