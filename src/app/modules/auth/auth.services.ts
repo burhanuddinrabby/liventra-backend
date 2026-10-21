@@ -7,7 +7,9 @@ import bcrypt from 'bcrypt';
 import config from "../../config/index.js";
 import type { SignOptions } from "jsonwebtoken";
 import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
+import { sendMails } from "../../utils/sendMail.js";
 import QueryBuilder from "../../builder/QueryBuilder.js";
+import crypto from 'crypto';
 
 // const createUserIntoDB = async (userData: TUser) => {
 const createUserIntoDB = async (file: any, userData: TUser): Promise<TUser> => {
@@ -64,6 +66,64 @@ const loginUser = async (email: string, password: string): Promise<{
         emailVerified: user.emailVerified,
         phoneVerified: user.phoneVerified
     }
+}
+
+//forgot password: email a time-limited reset link (only the token hash is stored)
+const forgotPassword = async (email: string): Promise<void> => {
+    const user = await UserModel.findOne({ email });
+    //no-op for unknown/inactive accounts so the response can't be used to probe registered emails
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    if (!user.isActive || user.isDeleted) {
+        throw new AppError(status.FORBIDDEN, 'Account is inactive or deleted!');
+    }
+
+    const RESET_TOKEN_TTL = '10m';
+    const RESET_TOKEN_EXP_MS = 10 * 60 * 1000;
+
+    //signed with the refresh secret so a leaked reset link token can never pass the access-token auth middleware
+    const resetToken = createToken(
+        { userId: user.userId, role: user.systemRole as string, type: 'password-reset' },
+        config.jwt_refresh_token as string,
+        RESET_TOKEN_TTL as SignOptions["expiresIn"]
+    );
+
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    //findOneAndUpdate — pre('save') re-hashes user.password on every save
+    await UserModel.findOneAndUpdate(
+        { userId: user.userId },
+        {
+            passwordResetToken: hashedToken,
+            passwordResetTokenExpiry: new Date(Date.now() + RESET_TOKEN_EXP_MS)
+        }
+    );
+
+    const resetLink = `${config.reset_ui_link}?token=${resetToken}`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px;">
+            <h2 style="color: #111827;">Reset your password</h2>
+            <p style="color: #374151;">Hello ${user.fullName},</p>
+            <p style="color: #374151;">
+                We received a request to reset the password for <strong>${user.email}</strong>.
+                Click the button below to choose a new password. The link is valid for <strong>10 minutes</strong>.
+            </p>
+            <p style="margin: 28px 0;">
+                <a href="${resetLink}"
+                   style="background-color: #16a34a; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 6px; display: inline-block;">
+                    Reset Password
+                </a>
+            </p>
+            <p style="color: #6b7280; font-size: 13px;">
+                If the button doesn't work, copy and paste this link into your browser:<br/>
+                <a href="${resetLink}" style="color: #2563eb; word-break: break-all;">${resetLink}</a>
+            </p>
+            <p style="color: #6b7280; font-size: 13px;">
+                If you didn't request this, you can safely ignore this email — your password will not change.
+            </p>
+        </div>
+    `;
+    await sendMails.sendPassResetMail(user.email, html);
 }
 
 //get profile
@@ -200,7 +260,9 @@ const deleteUser = async (userId: string): Promise<TUser> => {
 //get all users (paginated)
 const getAllUsers = async (query: Record<string, unknown>) => {
     const searchFields = ['fullName', 'email', 'phone', 'userId'];
-    const userQuery = new QueryBuilder(UserModel.find().select('-password'), query)
+    const userQuery = new QueryBuilder(UserModel.find({
+        isDeleted: false
+    }).select('-password'), query)
         .search(searchFields)
         .filter()
         .sort()
@@ -231,6 +293,7 @@ const getUserById = async (userId: string): Promise<TUser> => {
 export const UserServices = {
     createUserIntoDB,
     loginUser,
+    forgotPassword,
     getProfile,
     updateProfile,
     updateProfilePicture,

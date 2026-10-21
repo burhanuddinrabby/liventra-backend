@@ -33,6 +33,12 @@ const loginUserValidation = z.object({
     })
 });
 
+const forgotPasswordValidation = z.object({
+    body: z.object({
+        email: z.email({ message: "Invalid email address" }),
+    })
+});
+
 const updateProfileValidation = z.object({
     body: z.object({
         fullName: z.string().min(1, { message: "Full name is required" }).optional(),
@@ -66,6 +72,7 @@ const updateSystemRoleValidation = z.object({
 export const userValidations = {
     createUserValidation,
     loginUserValidation,
+    forgotPasswordValidation,
     updateProfileValidation,
     changePasswordValidation,
     updateSystemRoleValidation

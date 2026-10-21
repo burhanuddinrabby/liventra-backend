@@ -20,6 +20,9 @@ userRouter.post('/register-user', upload.single('file'), (req: Request, res: Res
 //POST /api/v1/users/login
 userRouter.post('/login', validateRequest(userValidations.loginUserValidation), UserController.loginUser);
 
+//POST /api/v1/users/forgot-password
+userRouter.post('/forgot-password', validateRequest(userValidations.forgotPasswordValidation), UserController.forgotPassword);
+
 // GET /api/v1/users/profile
 userRouter.get('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), UserController.getProfile);
 
@@ -50,7 +53,6 @@ userRouter.delete('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), User
 
 /* 
 
-- POST /api/v1/users/forgot-password
 - POST /api/v1/users/verify-email 
 - POST /api/v1/users/verify-phone
 */

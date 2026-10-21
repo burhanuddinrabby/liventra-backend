@@ -11,6 +11,8 @@ const userSchema = new Schema<TUser>(
         phone: { type: String, required: true, unique: true },
         email: { type: String, required: true, unique: true },
         password: { type: String, required: true },
+        passwordResetToken: { type: String },
+        passwordResetTokenExpiry: { type: Date },
         profilePicture: { type: String },
         gender: {
             type: String, enum: {
@@ -63,9 +65,9 @@ userSchema.pre('save', async function () {
 })
 
 //only non-deleted (isDeleted: false) users will be returned while searching (find / findOne)
-userSchema.pre(['find', 'findOne'], function () {
-    this.where({
-        isDeleted: false
-    });
-})
+// userSchema.pre(['find', 'findOne'], function () {
+//     this.where({
+//         isDeleted: false
+//     });
+// })
 export const UserModel = model<TUser>('User', userSchema);

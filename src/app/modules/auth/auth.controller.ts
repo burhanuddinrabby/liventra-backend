@@ -41,6 +41,16 @@ const loginUser = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const forgotPassword = catchAsync(async (req: Request, res: Response) => {
+    await UserServices.forgotPassword(req.body.email);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "If an account with this email exists, a password reset link has been sent!"
+    });
+});
+
 const getProfile = catchAsync(async (req: Request, res: Response) => {
     const user = await UserServices.getProfile(req.user.userId);
     sendResponse(res, {
@@ -141,6 +151,7 @@ const getUserById = catchAsync(async (req: Request, res: Response) => {
 export const UserController = {
     createUser,
     loginUser,
+    forgotPassword,
     getProfile,
     updateProfile,
     updateProfilePicture,

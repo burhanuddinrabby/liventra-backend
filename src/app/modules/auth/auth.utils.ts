@@ -2,15 +2,9 @@ import { UserModel } from "./auth.model.js";
 import jwt, { type JwtPayload, type SignOptions } from "jsonwebtoken";
 
 const lastUserId = async () => {
-    const lastUser = await UserModel.findOne(
-        {} as any,
-        {
-            userId: 1,
-            _id: 0
-        }
-    ).sort({
-        createdAt: -1
-    }).lean();
+    //find last user including those whose isDeleted is true, sort by createdAt in descending order and get the first one
+    const lastUser = await UserModel.findOne({}, { userId: 1 }).sort({ createdAt: -1 }).lean();
+
     return lastUser?.userId?.split('-')[2] || '00000';
 };
 
@@ -23,7 +17,7 @@ export const generateUserId = async (): Promise<string> => {
     return incrementId;
 }
 
-export const createToken = (jwtPayload: { userId: string, role: string },
+export const createToken = (jwtPayload: { userId: string, role: string, type?: string },
     secret: string,
     expiresIn: SignOptions["expiresIn"],
 ) => {

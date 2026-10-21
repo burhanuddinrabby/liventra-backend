@@ -11,6 +11,8 @@ export type TUser = {
     phone: string;
     email: string;
     password: string;
+    passwordResetToken?: string;
+    passwordResetTokenExpiry?: Date;
     profilePicture?: string;
     gender?: TGender;
     dateOfBirth?: Date;
