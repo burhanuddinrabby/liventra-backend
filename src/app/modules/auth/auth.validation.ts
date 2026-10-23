@@ -39,6 +39,13 @@ const forgotPasswordValidation = z.object({
     })
 });
 
+const resetPasswordValidation = z.object({
+    body: z.object({
+        token: z.string().min(1, { message: "Reset token is required" }),
+        newPassword: z.string().min(8, { message: "New password must be at least 8 characters long" }),
+    })
+});
+
 const updateProfileValidation = z.object({
     body: z.object({
         fullName: z.string().min(1, { message: "Full name is required" }).optional(),
@@ -73,6 +80,7 @@ export const userValidations = {
     createUserValidation,
     loginUserValidation,
     forgotPasswordValidation,
+    resetPasswordValidation,
     updateProfileValidation,
     changePasswordValidation,
     updateSystemRoleValidation

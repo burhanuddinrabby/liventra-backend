@@ -2,7 +2,7 @@ import status from "http-status";
 import AppError from "../../errors/AppError.js";
 import type { TUser } from "./auth.interface.js";
 import { UserModel } from "./auth.model.js";
-import { createToken, generateUserId } from "./auth.utils.js";
+import { createToken, generateUserId, verifyToken } from "./auth.utils.js";
 import bcrypt from 'bcrypt';
 import config from "../../config/index.js";
 import type { SignOptions } from "jsonwebtoken";
@@ -124,6 +124,44 @@ const forgotPassword = async (email: string): Promise<void> => {
         </div>
     `;
     await sendMails.sendPassResetMail(user.email, html);
+}
+
+//reset password using the token from the forgot-password email link (one-time use)
+const resetPassword = async (payload: { token: string; newPassword: string }): Promise<void> => {
+    let decoded;
+    try {
+        decoded = verifyToken(payload.token, config.jwt_refresh_token as string);
+    } catch {
+        throw new AppError(status.UNAUTHORIZED, 'Invalid or expired reset token!');
+    }
+    if (decoded.type !== 'password-reset') {
+        throw new AppError(status.UNAUTHORIZED, 'Invalid reset token!');
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(payload.token).digest('hex');
+    const user = await UserModel.findOne({ passwordResetToken: hashedToken });
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'Password reset token is invalid or already used!');
+    }
+    if (!user.passwordResetTokenExpiry || user.passwordResetTokenExpiry.getTime() < Date.now()) {
+        throw new AppError(status.UNAUTHORIZED, 'Password reset token has expired, please request a new link!');
+    }
+    if (!user.isActive || user.isDeleted) {
+        throw new AppError(status.FORBIDDEN, 'Account is inactive or deleted!');
+    }
+    const isSamePassword = await bcrypt.compare(payload.newPassword, user.password);
+    if (isSamePassword) {
+        throw new AppError(status.BAD_REQUEST, 'New password must be different from the current password!');
+    }
+
+    //pre-save hook hashes the password
+    user.password = payload.newPassword;
+    await user.save();
+    //token is single-use
+    await UserModel.updateOne(
+        { userId: user.userId },
+        { $unset: { passwordResetToken: 1, passwordResetTokenExpiry: 1 } }
+    );
 }
 
 //get profile
@@ -294,6 +332,7 @@ export const UserServices = {
     createUserIntoDB,
     loginUser,
     forgotPassword,
+    resetPassword,
     getProfile,
     updateProfile,
     updateProfilePicture,

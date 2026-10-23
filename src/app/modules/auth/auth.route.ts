@@ -23,6 +23,9 @@ userRouter.post('/login', validateRequest(userValidations.loginUserValidation), 
 //POST /api/v1/users/forgot-password
 userRouter.post('/forgot-password', validateRequest(userValidations.forgotPasswordValidation), UserController.forgotPassword);
 
+//POST /api/v1/users/reset-password
+userRouter.post('/reset-password', validateRequest(userValidations.resetPasswordValidation), UserController.resetPassword);
+
 // GET /api/v1/users/profile
 userRouter.get('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), UserController.getProfile);
 

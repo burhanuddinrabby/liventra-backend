@@ -51,6 +51,16 @@ const forgotPassword = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const resetPassword = catchAsync(async (req: Request, res: Response) => {
+    await UserServices.resetPassword(req.body);
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "Password reset successfully!!"
+    });
+});
+
 const getProfile = catchAsync(async (req: Request, res: Response) => {
     const user = await UserServices.getProfile(req.user.userId);
     sendResponse(res, {
@@ -152,6 +162,7 @@ export const UserController = {
     createUser,
     loginUser,
     forgotPassword,
+    resetPassword,
     getProfile,
     updateProfile,
     updateProfilePicture,
