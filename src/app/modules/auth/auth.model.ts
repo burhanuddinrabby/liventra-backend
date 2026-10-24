@@ -1,6 +1,6 @@
 import { model, Schema } from "mongoose";
-import { SystemRoles } from "./auth.constants.js";
-import type { TUser } from "./auth.interface.js";
+import { SystemRoles, VerificationPurposes } from "./auth.constants.js";
+import type { TEmailVerificationOtp, TUser } from "./auth.interface.js";
 import bcrypt from 'bcrypt';
 import config from "../../config/index.js";
 
@@ -71,3 +71,29 @@ userSchema.pre('save', async function () {
 //     });
 // })
 export const UserModel = model<TUser>('User', userSchema);
+
+//OTP records for email verification — only the sha256 hash of the code is stored (see hashEmailOtp in auth.services.ts)
+const emailVerificationOtpSchema = new Schema<TEmailVerificationOtp>(
+    {
+        email: { type: String, required: true, lowercase: true, index: true },
+        code: { type: String, required: true },
+        purpose: {
+            type: String,
+            enum: Object.values(VerificationPurposes),
+            default: VerificationPurposes.EMAIL,
+            required: true
+        },
+        attempts: { type: Number, default: 0 },
+        isVerified: { type: Boolean, default: false },
+        expiresAt: { type: Date, required: true }
+    },
+    {
+        timestamps: true
+    }
+);
+
+//TTL index — MongoDB purges the record itself once expiresAt passes (2 minutes, set by the service).
+//NOTE: expireAfterSeconds directly; mongoose's `{ expires: 0 }` sugar is falsy-skipped and would create a plain index
+emailVerificationOtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+export const EmailVerificationOtpModel = model<TEmailVerificationOtp>('EmailVerificationOtp', emailVerificationOtpSchema);

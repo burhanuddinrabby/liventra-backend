@@ -158,6 +158,18 @@ const getUserById = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const verifyEmail = catchAsync(async (req: Request, res: Response) => {
+    const { email, otp } = req.body;
+    const result = await UserServices.verifyEmail({ email, otp });
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: result.message,
+        data: result.data
+    });
+});
+
 export const UserController = {
     createUser,
     loginUser,
@@ -171,5 +183,6 @@ export const UserController = {
     toggleActive,
     deleteUser,
     getAllUsers,
-    getUserById
+    getUserById,
+    verifyEmail
 };

@@ -76,6 +76,14 @@ const updateSystemRoleValidation = z.object({
     })
 });
 
+//with otp -> verify the emailed code; without otp -> (re)send a fresh one
+const verifyEmailValidation = z.object({
+    body: z.object({
+        email: z.email({ message: "Invalid email address" }),
+        otp: z.string().regex(/^\d{6}$/, { message: "OTP must be a 6-digit code" }).optional(),
+    })
+});
+
 export const userValidations = {
     createUserValidation,
     loginUserValidation,
@@ -83,5 +91,6 @@ export const userValidations = {
     resetPasswordValidation,
     updateProfileValidation,
     changePasswordValidation,
-    updateSystemRoleValidation
+    updateSystemRoleValidation,
+    verifyEmailValidation
 };

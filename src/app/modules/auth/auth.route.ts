@@ -26,6 +26,10 @@ userRouter.post('/forgot-password', validateRequest(userValidations.forgotPasswo
 //POST /api/v1/users/reset-password
 userRouter.post('/reset-password', validateRequest(userValidations.resetPasswordValidation), UserController.resetPassword);
 
+//POST /api/v1/users/verify-email
+//body: { email } -> (re)send a 6-digit OTP by email | { email, otp } -> verify it
+userRouter.post('/verify-email', validateRequest(userValidations.verifyEmailValidation), UserController.verifyEmail);
+
 // GET /api/v1/users/profile
 userRouter.get('/profile', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), UserController.getProfile);
 
@@ -55,8 +59,6 @@ userRouter.patch('/:id/toggle-active', auth(SystemRoles.ADMIN, SystemRoles.SUPER
 userRouter.delete('/:id', auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN), UserController.deleteUser);
 
 /* 
-
-- POST /api/v1/users/verify-email 
 - POST /api/v1/users/verify-phone
 */
 export { userRouter };

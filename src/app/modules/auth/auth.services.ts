@@ -3,6 +3,8 @@ import AppError from "../../errors/AppError.js";
 import type { TUser } from "./auth.interface.js";
 import { UserModel } from "./auth.model.js";
 import { createToken, generateUserId, verifyToken } from "./auth.utils.js";
+import { EMAIL_OTP_LENGTH, EMAIL_OTP_MAX_ATTEMPTS, EMAIL_OTP_TTL_MS, VerificationPurposes } from "./auth.constants.js";
+import { EmailVerificationOtpModel } from "./auth.model.js";
 import bcrypt from 'bcrypt';
 import config from "../../config/index.js";
 import type { SignOptions } from "jsonwebtoken";
@@ -295,6 +297,125 @@ const deleteUser = async (userId: string): Promise<TUser> => {
     return updated;
 }
 
+//6-digit numeric code, always zero-padded
+const generateEmailOtp = (): string =>
+    crypto.randomInt(0, 10 ** EMAIL_OTP_LENGTH).toString().padStart(EMAIL_OTP_LENGTH, '0');
+
+//the code is never persisted in plain form: sha256 bound to purpose + email, compared with timingSafeEqual
+const hashEmailOtp = (email: string, otp: string): string =>
+    crypto.createHash('sha256')
+        .update(`${VerificationPurposes.EMAIL}:${email.toLowerCase()}:${otp}`)
+        .digest('hex');
+
+const constantTimeEquals = (a: string, b: string): boolean => {
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+};
+
+const getVerifiableUser = async (email: string): Promise<TUser> => {
+    const user = await UserModel.findOne({ email });
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, 'User not found!');
+    }
+    if (!user.isActive || user.isDeleted) {
+        throw new AppError(status.FORBIDDEN, 'Account is inactive or deleted!');
+    }
+    if (user.emailVerified) {
+        throw new AppError(status.BAD_REQUEST, 'Email is already verified!');
+    }
+    return user;
+};
+
+const sendEmailVerificationOtp = async (user: TUser): Promise<void> => {
+    //one pending code per email — a resend always invalidates the previous one
+    await EmailVerificationOtpModel.deleteMany({
+        email: user.email,
+        purpose: VerificationPurposes.EMAIL
+    });
+
+    const otp = generateEmailOtp();
+    await EmailVerificationOtpModel.create({
+        email: user.email,
+        code: hashEmailOtp(user.email, otp),
+        purpose: VerificationPurposes.EMAIL,
+        attempts: 0,
+        isVerified: false,
+        expiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MS)
+    });
+
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px;">
+            <h2 style="color: #111827;">Verify your email</h2>
+            <p style="color: #374151;">Hello ${user.fullName},</p>
+            <p style="color: #374151;">
+                Use the code below to verify <strong>${user.email}</strong>. It is valid for <strong>2 minutes</strong>.
+            </p>
+            <p style="margin: 28px 0; font-size: 32px; letter-spacing: 10px; font-weight: bold; color: #16a34a; text-align: center;">
+                ${otp}
+            </p>
+            <p style="color: #6b7280; font-size: 13px;">
+                If you didn't request this, you can safely ignore this email.
+            </p>
+        </div>
+    `;
+    await sendMails.sendVerificationOtpMail(user.email, html);
+}
+
+//send a fresh 6-digit code (2 min TTL) when no otp is given, verify it otherwise
+const verifyEmail = async (payload: { email: string; otp?: string }): Promise<{ message: string; data: { emailVerified: boolean } }> => {
+    //find the user which needs to be verified, throw if not found or already verified
+    const user = await getVerifiableUser(payload.email);
+
+    if (!payload.otp) {
+        //if no otp is provided, send a fresh one and return a message indicating that
+        await sendEmailVerificationOtp(user);
+        return {
+            message: `Verification code sent to ${user.email}!`,
+            data: { emailVerified: false }
+        };
+    }
+
+    //if otp is provided, verify it against the stored hash and mark the account verified if successful
+    const otpRecord = await EmailVerificationOtpModel.findOne({
+        email: user.email,
+        purpose: VerificationPurposes.EMAIL,
+        isVerified: false,
+        expiresAt: { $gt: new Date() }
+    });
+    if (!otpRecord) {
+        throw new AppError(status.NOT_FOUND, 'Verification code is invalid or expired, please request a new one!');
+    }
+
+    if (!constantTimeEquals(otpRecord.code, hashEmailOtp(user.email, payload.otp))) {
+        //if the code is wrong, increment the attempts and expire the record if max attempts (5) reached
+        const attempts = otpRecord.attempts + 1;
+        const exhausted = attempts >= EMAIL_OTP_MAX_ATTEMPTS;
+        //a burnt code is expired on the spot so it can't be brute-forced any further
+        await EmailVerificationOtpModel.updateOne(
+            { email: user.email, purpose: VerificationPurposes.EMAIL, isVerified: false },
+            { attempts, ...(exhausted ? { expiresAt: new Date() } : {}) }
+        );
+        if (exhausted) {
+            throw new AppError(status.TOO_MANY_REQUESTS, 'Too many invalid attempts, please request a new code!');
+        }
+        throw new AppError(status.UNAUTHORIZED, `Invalid verification code! ${EMAIL_OTP_MAX_ATTEMPTS - attempts} attempt(s) remaining.`);
+    }
+
+    //success: consume the otp (single-use, expired immediately) and flag the account verified
+    await EmailVerificationOtpModel.updateOne(
+        { email: user.email, purpose: VerificationPurposes.EMAIL, isVerified: false },
+        { isVerified: true, expiresAt: new Date(), attempts: otpRecord.attempts + 1 }
+    );
+    //findOneAndUpdate — .save() would re-hash the password via the pre('save') hook
+    await UserModel.updateOne({ email: user.email }, { emailVerified: true });
+
+    return {
+        message: 'Email verified successfully!!',
+        data: { emailVerified: true }
+    };
+}
+
 //get all users (paginated)
 const getAllUsers = async (query: Record<string, unknown>) => {
     const searchFields = ['fullName', 'email', 'phone', 'userId'];
@@ -341,5 +462,6 @@ export const UserServices = {
     toggleActive,
     deleteUser,
     getAllUsers,
-    getUserById
+    getUserById,
+    verifyEmail
 }

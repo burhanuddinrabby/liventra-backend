@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars */
 import { Model } from "mongoose";
-import type { SystemRoles } from "./auth.constants.js";
+import type { SystemRoles, VerificationPurposes } from "./auth.constants.js";
 import type { TGender } from "../../globals/global.constants.js";
 
 export type TSystemRole = keyof typeof SystemRoles;
@@ -31,6 +31,19 @@ export type TUser = {
     isDeleted: boolean
 }
 
+
+export type TVerificationPurpose = (typeof VerificationPurposes)[keyof typeof VerificationPurposes];
+
+export type TEmailVerificationOtp = {
+    email: string;
+    code: string;
+    purpose: TVerificationPurpose;
+    attempts: number;
+    isVerified: boolean;
+    expiresAt: Date;
+    createdAt?: Date;
+    updatedAt?: Date;
+}
 
 export interface AuthUserModel extends Model<TUser> {
     isUserExistById(id: string): Promise<TUser>;
