@@ -27,21 +27,21 @@ const getMyFarms = catchAsync(async (req: Request, res: Response) => {
     data: farms,
   });
 });
-/* 
 
 const getFarmById = catchAsync(async (req: Request, res: Response) => {
-const isAdmin = req.user.role === "admin" || req.user.role === "superAdmin";
-const farm = await FarmServices.getFarmById(
-req.params.id as string,
-isAdmin ? undefined : req.user.userId,
-);
-sendResponse(res, {
-statusCode: status.OK,
-success: true,
-message: "Farm retrieved successfully!",
-data: farm,
+  const farm = await FarmServices.getFarmById(
+    req.params.farmId as string,
+    req.user.userId,
+  );
+  sendResponse(res, {
+    statusCode: status.OK,
+    success: true,
+    message: "Farm retrieved successfully!",
+    data: farm,
+  });
 });
-});
+
+/* 
 
 const updateFarm = catchAsync(async (req: Request, res: Response) => {
 const farm = await FarmServices.updateFarm(
@@ -101,8 +101,8 @@ data: farm,
 export const FarmController = {
   createFarm,
   getMyFarms,
-  /* 
   getFarmById,
+  /* 
   updateFarm,
   deactivateFarm,
   reactivateFarm,

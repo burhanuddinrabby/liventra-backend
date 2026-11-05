@@ -13,13 +13,14 @@ type TFarmPayload = Omit<TFarm, "farmId" | "ownerId" | "status"> & {
   establishedDate?: string | Date;
 };
 
-// eslint-disable-next-line no-unused-vars
 const getFarmFilter = (farmId: string, ownerId?: string) => {
+  //example: farmId = "FARM-00001" or "64b8f8c8e4b0f1a2b3c4d5e6"
   const identifier = isValidObjectId(farmId)
     ? [{ _id: farmId }, { farmId: farmId }]
     : [{ farmId: farmId }];
 
   return ownerId ? { ownerId, $or: identifier } : { $or: identifier };
+  //example: { ownerId: "123", $or: [{ _id: "123" }, { farmId: "FARM-00001" }] }
 };
 
 const createFarm = async (ownerId: string, file: any, payload: TFarmPayload): Promise<TFarm> => {
@@ -73,7 +74,7 @@ const getMyFarms = async (ownerId: string, query: Record<string, unknown>) => {
   if (!user) {
     throw new AppError(status.FORBIDDEN, "Only an active user can get farms!",);
   }
-  const farmQuery = new QueryBuilder<TFarm>(FarmModel.find({ ownerId: user._id }).populate("ownerId", "userId fullName email phone"), query)
+  const farmQuery = new QueryBuilder<TFarm>(FarmModel.find({ ownerId: user._id }).populate("ownerId", "userId fullName email phone profilePicture"), query)
     .search(["farmName", "farmId", "phone", "email"])
     .filter()
     .sort()
@@ -88,18 +89,29 @@ const getMyFarms = async (ownerId: string, query: Record<string, unknown>) => {
   return { meta, farms };
 };
 
-/* 
-const getFarmById = async (
-farmId: string,
-ownerId?: string,
-): Promise<TFarm> => {
-const farm = await FarmModel.findOne(getFarmFilter(farmId, ownerId));
-if (!farm) {
-throw new AppError(status.NOT_FOUND, "Farm not found!");
-}
-return farm;
+const getFarmById = async (farmId: string, requesterUserId: string): Promise<TFarm> => {
+  const user = await UserModel.findOne({ userId: requesterUserId, isActive: true, isDeleted: false }).select("_id");
+  if (!user) {
+    throw new AppError(status.FORBIDDEN, "Only an active user can access a farm profile!",);
+  }
+
+  const farm = await FarmModel.findOne(getFarmFilter(farmId));
+  if (!farm) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  // The owner is currently the only farm member (the FarmMember module is not implemented yet).
+  // When it lands, replace this with an active-membership lookup scoped to farm._id + user._id.
+  if (!farm.ownerId.equals(user._id)) {
+    throw new AppError(status.FORBIDDEN, "You are not a member of this farm!",);
+  }
+
+  //attach owner profile metadata for the dashboard
+  await farm.populate("ownerId", "userId fullName email phone profilePicture");
+  return farm;
 };
 
+/* 
 const updateFarm = async (
 farmId: string,
 ownerId: string,
@@ -141,8 +153,8 @@ return updated;
 export const FarmServices = {
   createFarm,
   getMyFarms,
-  /* 
   getFarmById,
+  /* 
   updateFarm,
   updateFarmStatus, */
 };
