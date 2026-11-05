@@ -33,15 +33,15 @@ farmRouter.get(
   auth(...authenticatedRoles),
   FarmController.getFarmById,
 );
-/* 
 
-// PUT /api/v1/farms/:id — ownership transfer and membership authorization will be added with FarmMember
+// PUT /api/v1/farms/:farmId — only a member of the targeted farm (currently the owner)
 farmRouter.put(
-  "/:id",
+  "/:farmId",
   auth(...authenticatedRoles),
   validateRequest(farmValidations.updateFarmValidation),
   FarmController.updateFarm,
 );
+/* 
 
 // PATCH /api/v1/farms/:id/deactivate
 farmRouter.patch(
@@ -69,9 +69,6 @@ export { farmRouter };
 
 
 /*
-GET     /api/v1/farms/:farmId   Farm Member    Retrieves detailed profile metadata for a specific farm after verifying user membership.
-
-PUT    /api/v1/farms/:farmId   Farm Member    Updates safe farm profile details (farmName, address, phone, email, establishedDate, totalArea, description) and other necessary information.
 
 PATCH   /api/v1/farms/:farmId/logo   Owner/Manager    Uploads or updates the farm logo URL used in UI dashboards and exported PDF reports.
 

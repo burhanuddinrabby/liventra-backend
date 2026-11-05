@@ -89,7 +89,7 @@ const getMyFarms = async (ownerId: string, query: Record<string, unknown>) => {
   return { meta, farms };
 };
 
-const getFarmById = async (farmId: string, requesterUserId: string): Promise<TFarm> => {
+const getFarmForMember = async (farmId: string, requesterUserId: string) => {
   const user = await UserModel.findOne({ userId: requesterUserId, isActive: true, isDeleted: false }).select("_id");
   if (!user) {
     throw new AppError(status.FORBIDDEN, "Only an active user can access a farm profile!",);
@@ -106,34 +106,90 @@ const getFarmById = async (farmId: string, requesterUserId: string): Promise<TFa
     throw new AppError(status.FORBIDDEN, "You are not a member of this farm!",);
   }
 
+  return farm;
+};
+
+const getFarmById = async (farmId: string, requesterUserId: string): Promise<TFarm> => {
+  const farm = await getFarmForMember(farmId, requesterUserId);
   //attach owner profile metadata for the dashboard
   await farm.populate("ownerId", "userId fullName email phone profilePicture");
   return farm;
 };
 
-/* 
-const updateFarm = async (
-farmId: string,
-ownerId: string,
-payload: Partial<TFarmPayload>,
-): Promise<TFarm> => {
-const { establishedDate, ...updates } = payload;
-const updated = await FarmModel.findOneAndUpdate(
-getFarmFilter(farmId, ownerId),
-{
-  ...updates,
-  ...(establishedDate === undefined
-    ? {}
-    : { establishedDate: new Date(establishedDate) }),
-},
-{ new: true, runValidators: true },
-);
-if (!updated) {
-throw new AppError(status.NOT_FOUND, "Farm not found!");
-}
-return updated;
+//fields a farm member is allowed to edit; identity (farmId/ownerId), status and logo are handled elsewhere
+const UPDATABLE_FARM_FIELDS = [
+  "farmName",
+  "farmType",
+  "address",
+  "location",
+  "phone",
+  "email",
+  "establishedDate",
+  "totalArea",
+  "capacity",
+  "description",
+] as const;
+
+//validateRequest discards the parsed body, so unknown keys are still present here — whitelist them out
+const pickFarmUpdates = (payload: Record<string, unknown>) => {
+  const updates: Record<string, unknown> = {};
+  for (const field of UPDATABLE_FARM_FIELDS) {
+    if (payload[field] !== undefined) {
+      updates[field] = payload[field];
+    }
+  }
+  return updates;
 };
 
+const updateFarm = async (
+  farmId: string,
+  requesterUserId: string,
+  payload: Record<string, unknown>,
+): Promise<TFarm> => {
+  const farm = await getFarmForMember(farmId, requesterUserId);
+
+  if (farm.status === FarmStatuses.ARCHIVED) {
+    throw new AppError(status.FORBIDDEN, "This farm is suspended and cannot be updated!",);
+  }
+
+  const updates = pickFarmUpdates(payload);
+  if (Object.keys(updates).length === 0) {
+    throw new AppError(status.BAD_REQUEST, "No updatable farm fields were provided!",);
+  }
+
+  //renaming to a name the owner already uses on another farm is rejected, same as creation
+  if (typeof updates.farmName === "string") {
+    updates.farmName = updates.farmName.trim();
+  }
+  if (typeof updates.farmName === "string" && updates.farmName !== farm.farmName) {
+    const existingFarmWithName = await FarmModel.findOne({
+      ownerId: farm.ownerId,
+      farmName: updates.farmName,
+      _id: { $ne: farm._id },
+    });
+    if (existingFarmWithName) {
+      throw new AppError(status.FORBIDDEN, "You already have a farm with the same name. Please choose a different name.",);
+    }
+  }
+
+  if (updates.establishedDate !== undefined) {
+    updates.establishedDate = new Date(updates.establishedDate as string | Date);
+  }
+
+  const updated = await FarmModel.findOneAndUpdate(
+    { _id: farm._id },
+    { $set: updates },
+    { new: true, runValidators: true },
+  );
+  if (!updated) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  await updated.populate("ownerId", "userId fullName email phone profilePicture");
+  return updated;
+};
+
+/* 
 const updateFarmStatus = async (
 farmId: string,
 statusValue: string,
@@ -154,7 +210,7 @@ export const FarmServices = {
   createFarm,
   getMyFarms,
   getFarmById,
-  /* 
   updateFarm,
+  /* 
   updateFarmStatus, */
 };

@@ -41,21 +41,21 @@ const getFarmById = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-/* 
-
 const updateFarm = catchAsync(async (req: Request, res: Response) => {
-const farm = await FarmServices.updateFarm(
-req.params.id as string,
-req.user.userId,
-req.body,
-);
-sendResponse(res, {
-statusCode: status.OK,
-success: true,
-message: "Farm updated successfully!",
-data: farm,
+  const farm = await FarmServices.updateFarm(
+    req.params.farmId as string,
+    req.user.userId,
+    req.body as Record<string, unknown>,
+  );
+  sendResponse(res, {
+    statusCode: status.OK,
+    success: true,
+    message: "Farm updated successfully!",
+    data: farm,
+  });
 });
-});
+
+/* 
 
 const deactivateFarm = catchAsync(async (req: Request, res: Response) => {
 const farm = await FarmServices.updateFarmStatus(
@@ -102,8 +102,8 @@ export const FarmController = {
   createFarm,
   getMyFarms,
   getFarmById,
-  /* 
   updateFarm,
+  /* 
   deactivateFarm,
   reactivateFarm,
   updateFarmStatus, */
