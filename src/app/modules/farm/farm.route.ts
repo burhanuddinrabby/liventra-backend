@@ -24,7 +24,14 @@ farmRouter.post(
   validateRequest(farmValidations.createFarmValidation),
   FarmController.createFarm,
 );
-// GET /api/v1/farms — currently returns farms owned by the authenticated user
+// GET /api/v1/farms — platform administrators only: all registered farms, paginated
+farmRouter.get(
+  "/",
+  auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),
+  FarmController.getAllFarms,
+);
+
+// GET /api/v1/farms/my-farms — currently returns farms owned by the authenticated user
 farmRouter.get("/my-farms", auth(...authenticatedRoles), FarmController.getMyFarms);
 
 // GET /api/v1/farms/:farmId — only a member of the targeted farm (currently the owner)
@@ -41,6 +48,31 @@ farmRouter.put(
   validateRequest(farmValidations.updateFarmValidation),
   FarmController.updateFarm,
 );
+
+// PATCH /api/v1/farms/:farmId/logo — multipart "logo" file and/or a logo URL in the body
+farmRouter.patch(
+  "/:farmId/logo",
+  auth(...authenticatedRoles),
+  upload.single("logo"),
+  validateRequest(farmValidations.updateFarmLogoValidation),
+  FarmController.updateFarmLogo,
+);
+
+// PATCH /api/v1/farms/:farmId/status — platform administrators only
+farmRouter.patch(
+  "/:farmId/status",
+  auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),
+  validateRequest(farmValidations.statusValidation),
+  FarmController.updateFarmStatus,
+);
+
+// POST /api/v1/farms/:farmId/transfer-ownership — farm owner or super admin only
+farmRouter.post(
+  "/:farmId/transfer-ownership",
+  auth(...authenticatedRoles),
+  validateRequest(farmValidations.transferOwnershipValidation),
+  FarmController.transferFarmOwnership,
+);
 /* 
 
 // PATCH /api/v1/farms/:id/deactivate
@@ -55,14 +87,6 @@ farmRouter.patch(
   "/:id/reactivate",
   auth(...authenticatedRoles),
   FarmController.reactivateFarm,
-);
-
-// PATCH /api/v1/farms/:id/status — platform administrators only
-farmRouter.patch(
-  "/:id/status",
-  auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),
-  validateRequest(farmValidations.statusValidation),
-  FarmController.updateFarmStatus,
 ); */
 
 export { farmRouter };

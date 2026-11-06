@@ -59,19 +59,36 @@ const updateFarmValidation = z.object({
     .partial()
 });
 
+const updateFarmLogoValidation = z.object({
+  body: z.object({
+    logo: z.url().optional(),
+  }),
+});
+
 const statusValidation = z.object({
   body: z.object({
     status: z.enum([
-      FarmStatuses.SETUP,
       FarmStatuses.ACTIVE,
       FarmStatuses.INACTIVE,
       FarmStatuses.ARCHIVED,
+      FarmStatuses.SETUP,
     ]),
+  }),
+});
+
+const transferOwnershipValidation = z.object({
+  body: z.object({
+    newOwnerId: z
+      .string()
+      .trim()
+      .min(1, { message: "New owner id is required" }),
   }),
 });
 
 export const farmValidations = {
   createFarmValidation,
   updateFarmValidation,
+  updateFarmLogoValidation,
   statusValidation,
+  transferOwnershipValidation,
 };

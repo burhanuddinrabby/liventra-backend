@@ -2,9 +2,10 @@ import status from "http-status";
 import { isValidObjectId } from "mongoose";
 import AppError from "../../errors/AppError.js";
 import { UserModel } from "../auth/auth.model.js";
+import { SystemRoles } from "../auth/auth.constants.js";
 import { FarmModel } from "./farm.model.js";
 import { FarmStatuses } from "./farm.constants.js";
-import type { TFarm } from "./farm.interface.js";
+import type { TFarm, TFarmStatus } from "./farm.interface.js";
 import QueryBuilder from "../../builder/QueryBuilder.js";
 import { generateFarmId } from "./farm.utils.js";
 import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
@@ -189,28 +190,144 @@ const updateFarm = async (
   return updated;
 };
 
-/* 
-const updateFarmStatus = async (
-farmId: string,
-statusValue: string,
-ownerId?: string,
+const updateFarmLogo = async (
+  farmId: string,
+  requesterUserId: string,
+  file?: Express.Multer.File,
+  logoUrl?: string,
 ): Promise<TFarm> => {
-const updated = await FarmModel.findOneAndUpdate(
-getFarmFilter(farmId, ownerId),
-{ status: statusValue },
-{ new: true, runValidators: true },
-);
-if (!updated) {
-throw new AppError(status.NOT_FOUND, "Farm not found!");
-}
-return updated;
-}; */
+  const farm = await getFarmForMember(farmId, requesterUserId);
+
+  if (farm.status === FarmStatuses.ARCHIVED) {
+    throw new AppError(status.FORBIDDEN, "This farm is suspended and cannot be updated!",);
+  }
+
+  let logo = logoUrl;
+  if (file) {
+    //cloudinary public_id must not contain path separators
+    const safeFarmName = farm.farmName.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const imgName = `${safeFarmName}-${requesterUserId}-logo`;
+    const image = await uploadImageToCloudinary(imgName, file.path);
+    logo = image?.secure_url as string;
+  }
+
+  if (!logo) {
+    throw new AppError(status.BAD_REQUEST, "A logo file or a logo URL is required!",);
+  }
+
+  const updated = await FarmModel.findByIdAndUpdate(
+    farm._id,
+    { $set: { logo } },
+    { new: true, runValidators: true },
+  );
+  if (!updated) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  await updated.populate("ownerId", "userId fullName email phone profilePicture");
+  return updated;
+};
+
+//platform administrators only — every farm across the system, paginated/filterable
+const getAllFarms = async (query: Record<string, unknown>) => {
+  const farmQuery = new QueryBuilder<TFarm>(
+    FarmModel.find().populate("ownerId", "userId fullName email phone"),
+    query,
+  )
+    .search(["farmName", "farmId", "phone", "email"])
+    .filter()
+    .sort()
+    .paginate()
+    .fields();
+
+  const [meta, farms] = await Promise.all([
+    farmQuery.countTotal(),
+    farmQuery.modelQuery
+  ]);
+  return { meta, farms };
+};
+
+const updateFarmStatus = async (farmId: string, statusValue: TFarmStatus,): Promise<TFarm> => {
+  const farm = await FarmModel.findOne(getFarmFilter(farmId));
+  if (!farm) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  const updated = await FarmModel.findOneAndUpdate(
+    { _id: farm._id },
+    { $set: { status: statusValue } },
+    { new: true, runValidators: true },
+  );
+  if (!updated) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  await updated.populate("ownerId", "userId fullName email phone");
+  return updated;
+};
+
+const transferFarmOwnership = async (farmId: string, requesterUserId: string, newOwnerIdentifier: string): Promise<TFarm> => {
+  const requester = await UserModel.findOne({ userId: requesterUserId, isActive: true, isDeleted: false }).select("_id systemRole");
+  if (!requester) {
+    throw new AppError(status.FORBIDDEN, "Only an active user can transfer farm ownership!",);
+  }
+
+  const farm = await FarmModel.findOne(getFarmFilter(farmId));
+  if (!farm) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  const isSuperAdmin = requester.systemRole === SystemRoles.SUPER_ADMIN;
+  if (!isSuperAdmin && !farm.ownerId.equals(requester._id)) {
+    throw new AppError(status.FORBIDDEN, "Only the farm owner or a super admin can transfer ownership!",);
+  }
+
+  if (farm.status === FarmStatuses.ARCHIVED && !isSuperAdmin) {
+    throw new AppError(status.FORBIDDEN, "This farm is suspended and cannot be updated!",);
+  }
+
+  const newOwnerFilter = isValidObjectId(newOwnerIdentifier)
+    ? { $or: [{ userId: newOwnerIdentifier }, { _id: newOwnerIdentifier }] }
+    : { userId: newOwnerIdentifier };
+  const newOwner = await UserModel.findOne({
+    ...newOwnerFilter,
+    isActive: true,
+    isDeleted: false,
+  }).select("_id emailVerified");
+  if (!newOwner) {
+    throw new AppError(status.NOT_FOUND, "New owner not found or is not an active user!",);
+  }
+  if (!newOwner.emailVerified) {
+    throw new AppError(status.FORBIDDEN, "The new owner must verify their email before receiving farm ownership!",);
+  }
+  if (newOwner._id.equals(farm.ownerId)) {
+    throw new AppError(status.BAD_REQUEST, "This user already owns the farm!",);
+  }
+
+  //ownerId is immutable in the schema, so the transfer must explicitly opt in to overwrite it
+  const updated = await FarmModel.findOneAndUpdate(
+    { _id: farm._id },
+    { $set: { ownerId: newOwner._id } },
+    { new: true, runValidators: true, overwriteImmutable: true },
+  );
+  if (!updated) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  //NOTE: the FarmMember module does not exist yet. Once it lands, this transfer must also
+  //demote the previous owner's membership and promote the new owner's to Owner, inside a
+  //transaction with the ownerId change above.
+  await updated.populate("ownerId", "userId fullName email phone profilePicture");
+  return updated;
+};
 
 export const FarmServices = {
   createFarm,
   getMyFarms,
   getFarmById,
   updateFarm,
-  /* 
-  updateFarmStatus, */
+  updateFarmLogo,
+  getAllFarms,
+  updateFarmStatus,
+  transferFarmOwnership,
 };
