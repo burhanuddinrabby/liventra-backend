@@ -18,6 +18,7 @@ MERN livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Z
 - Modules live in `src/app/modules/<name>/`: `*.route.ts`, `.controller.ts`, `.services.ts`, `.model.ts`, `.validation(s).ts`, `.interface.ts`, `.constants.ts`, `.utils.ts`; each exports an object (`userRouter`, `UserController`, `UserServices`, `farmValidations`). Newest reference implementation is `farm` (its unimplemented routes are commented out inline in route/controller/services — uncomment + implement rather than rewriting from scratch).
 - `src/app/builder/QueryBuilder.ts` drives list endpoints: `.search([...]).filter().sort().paginate().fields()`, then `await countTotal()` and `await modelQuery` (run both in `Promise.all`).
 - Two ID styles: users have a custom string `userId` (`U-YY-NNNN`), farms have `farmId` (`FARM-NNNNN`). JWT carries that string `userId`, but `Farm.ownerId` is a Mongoose `ObjectId` — farm services must look the user up (`UserModel.findOne({ userId })`) and use `_id`.
+- Farm-level RBAC is `FarmMember` (`src/app/modules/farmMember/`, mounted at `/farms/:farmId/members`): an **active** membership row is required for any farm-scoped request, and its `role` (`Owner` / `Manager` / `Worker` / `Veterinarian` / `Accountant`) decides permissions. Duplicate *active* memberships are blocked by a partial unique index `(farmId, userId)`; inactive rows are history. `nid`/`salary` are `select: false` and management-only. `Farm.ownerId` must always have an active `Owner` membership — created on farm creation, backfilled on startup (`syncOwnedFarmMemberships`), and re-synced on ownership transfer (old owner → `Manager`).
 - Roles: `SystemRoles` = `user` / `admin` / `superAdmin` (`src/app/modules/auth/auth.constants.ts`). `TSystemRole` is `keyof typeof SystemRoles` (uppercase keys), so don't use it for stored values.
 
 ## Conventions
@@ -46,4 +47,6 @@ MERN livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Z
 
 - `.opencode/Business Logic MDs/` — 28 numbered domain specs (`01_User` … `28_Report`); read the relevant one before building a module (local only, git-ignored).
 - `api_documentation/auth.md` — hand-written endpoint docs for the users/auth API; keep it in sync when changing those routes.
+- `api_documentation/farm.md` — farm CRUD, logo/status updates, ownership transfer and the FarmMember consistency rules.
+- `api_documentation/farmMember.md` — farm member directory API (roles, sensitive fields, ownership-transfer side effects).
 - `todos.md` — current dev todos (Bengali).

@@ -5,6 +5,7 @@ import { SystemRoles } from "../auth/auth.constants.js";
 import { FarmController } from "./farm.controller.js";
 import { farmValidations } from "./farm.validations.js";
 import { upload } from "../../utils/uploadImage.js";
+import { farmMemberRouter } from "../farmMember/farmMember.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -31,17 +32,20 @@ farmRouter.get(
   FarmController.getAllFarms,
 );
 
-// GET /api/v1/farms/my-farms — currently returns farms owned by the authenticated user
+// GET /api/v1/farms/my-farms — every farm where the user has an active membership, with their role
 farmRouter.get("/my-farms", auth(...authenticatedRoles), FarmController.getMyFarms);
 
-// GET /api/v1/farms/:farmId — only a member of the targeted farm (currently the owner)
+// /api/v1/farms/:farmId/members — FarmMember module (mergeParams gives it :farmId)
+farmRouter.use("/:farmId/members", farmMemberRouter);
+
+// GET /api/v1/farms/:farmId — any active member of the targeted farm
 farmRouter.get(
   "/:farmId",
   auth(...authenticatedRoles),
   FarmController.getFarmById,
 );
 
-// PUT /api/v1/farms/:farmId — only a member of the targeted farm (currently the owner)
+// PUT /api/v1/farms/:farmId — farm owner or manager only
 farmRouter.put(
   "/:farmId",
   auth(...authenticatedRoles),

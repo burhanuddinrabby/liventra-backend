@@ -1,0 +1,36 @@
+Model 03: FarmMember API Endpoints
+
+Method Endpoint Access Level Description
+POST /api/v1/farms/:farmId/members Farm Owner / Manager Adds/invites a registered user as a member of the farm with a specific role.
+GET /api/v1/farms/:farmId/members Farm Member Lists all active members and staff assigned to the specified farm.
+GET /api/v1/farms/:farmId/members/:memberId Farm Member Retrieves detailed profile metadata for a specific farm member.
+PUT /api/v1/farms/:farmId/members/:memberId Farm Owner / Manager Updates a member's operational details (role, salary, nid, joiningDate).
+PATCH /api/v1/farms/:farmId/members/:memberId/toggle-active Farm Owner / Manager Activates or deactivates a member's access (isActive: true/false) without deleting historical data.
+DELETE /api/v1/farms/:farmId/members/:memberId Farm Owner Soft-deletes or removes a member relationship from the farm.
+
+
+Endpoint Descriptions & Business Logic
+
+1. Onboarding & Member Association
+
+POST /api/v1/farms/:farmId/members
+Associates a user with a farm by creating a FarmMember record. The payload specifies the target user (userId), role (Owner, Manager, Worker, Veterinarian, Accountant), nid, joiningDate, and optional salary. Prevent duplicate active memberships for the same user-farm combination.
+
+2. Member Retrieval & Directory
+
+GET /api/v1/farms/:farmId/members
+Returns the list of personnel associated with the farm. Essential for UI staff management dashboards, assigning tasks, and filtering operational activities (e.g., who logged a feeding or milking session).
+GET /api/v1/farms/:farmId/members/:memberId
+Retrieves comprehensive information for a single farm member, including their farm-specific role, employment dates, and national identity details (nid).
+
+3. Role & Salary Management
+
+PUT /api/v1/farms/:farmId/members/:memberId
+Updates farm-level permissions or operational parameters. For example, promoting a Worker to Manager or updating salary information. Restrict role escalation (e.g., a Manager cannot promote themselves or others to Owner).
+
+4. Deactivation & Lifecycle Control
+
+PATCH /api/v1/farms/:farmId/members/:memberId/toggle-active
+Deactivates a user's membership (isActive: false) when they leave employment or change farms. Deactivation revokes their ability to perform farm operations immediately while preserving historical logs (e.g., feedings performed or treatments administered by them remain traceable).
+DELETE /api/v1/farms/:farmId/members/:memberId
+Removes a member entry. Used primarily for cleanups of accidental invitations or unconfirmed entries; deactivation is preferred for active workers with historical operational records.

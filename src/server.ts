@@ -5,6 +5,7 @@ import AppError from "./app/errors/AppError.js";
 import status from "http-status";
 import mongoose from "mongoose";
 import seedSuperAdmin from "./app/DB/index.js";
+import { FarmMemberServices } from "./app/modules/farmMember/farmMember.service.js";
 
 let server: Server;
 
@@ -15,6 +16,13 @@ async function main() {
     }
     await mongoose.connect(mongoUrl);
     seedSuperAdmin();
+
+    //idempotent backfill: farms created before the FarmMember module still need their
+    //Owner membership row so Farm.ownerId and FarmMember stay consistent (Model 03)
+    FarmMemberServices.syncOwnedFarmMemberships().catch((error: unknown) => {
+        console.log("Farm owner membership sync failed!", error);
+    });
+
     server = app.listen(config.port, () => {
         console.log(`The app listening on port ${config.port}`);
     });

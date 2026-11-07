@@ -9,6 +9,10 @@ import type { TFarm, TFarmStatus } from "./farm.interface.js";
 import QueryBuilder from "../../builder/QueryBuilder.js";
 import { generateFarmId } from "./farm.utils.js";
 import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
+import { FarmMemberModel } from "../farmMember/farmMember.model.js";
+import { FarmMemberRoles } from "../farmMember/farmMember.constants.js";
+import { FarmMemberServices } from "../farmMember/farmMember.service.js";
+import type { TFarmMemberRole } from "../farmMember/farmMember.interface.js";
 
 type TFarmPayload = Omit<TFarm, "farmId" | "ownerId" | "status"> & {
   establishedDate?: string | Date;
@@ -66,31 +70,86 @@ const createFarm = async (ownerId: string, file: any, payload: TFarmPayload): Pr
     status: FarmStatuses.SETUP,
   }
   const result = await FarmModel.create(farmData);
+
+  //ownership consistency: the owner must also exist as an active FarmMember (Farm spec §8)
+  try {
+    await FarmMemberServices.ensureOwnerMembership(result._id, owner._id, {
+      joiningDate: result.createdAt,
+      assignedBy: owner._id,
+    });
+  } catch (error) {
+    //compensating workflow — never leave an ownerless operational farm (Farm spec edge case 1)
+    await FarmModel.deleteOne({ _id: result._id }).catch(() => undefined);
+    throw error;
+  }
+
   return result;
 };
 
+//populated refs become objects — reduce them back to their id for comparisons
+const ownerIdOf = (owner: unknown): string => {
+  if (owner && typeof owner === "object" && "_id" in owner) {
+    return String((owner as { _id: unknown })._id);
+  }
+  return String(owner);
+};
+
 const getMyFarms = async (ownerId: string, query: Record<string, unknown>) => {
-  //populate ownerId to get owner info, but only select userId and name
-  const user = await UserModel.findOne({ userId: ownerId, isActive: true, isDeleted: false, }).select("userId name email phone");
+  const user = await UserModel.findOne({ userId: ownerId, isActive: true, isDeleted: false }).select("_id userId");
   if (!user) {
     throw new AppError(status.FORBIDDEN, "Only an active user can get farms!",);
   }
-  const farmQuery = new QueryBuilder<TFarm>(FarmModel.find({ ownerId: user._id }).populate("ownerId", "userId fullName email phone profilePicture"), query)
+
+  //a user can belong to multiple farms with a different role in each, so "my farms"
+  //is every farm where the user has an ACTIVE membership (owner included).
+  const memberships = await FarmMemberModel.find({ userId: user._id, isActive: true })
+    .select("farmId role")
+    .lean();
+  const roleByFarm = new Map<string, TFarmMemberRole>(
+    memberships.map((membership) => [String(membership.farmId), membership.role]),
+  );
+
+  const farmQuery = new QueryBuilder<TFarm>(
+    FarmModel.find({
+      $or: [
+        { ownerId: user._id },
+        { _id: { $in: memberships.map((membership) => membership.farmId) } },
+      ],
+    }).populate("ownerId", "userId fullName email phone profilePicture"),
+    query,
+  )
     .search(["farmName", "farmId", "phone", "email"])
     .filter()
     .sort()
     .paginate()
     .fields();
 
-  //find owner info, set to response
+  //lean so the requester's farm-specific role can be attached to each record
   const [meta, farms] = await Promise.all([
     farmQuery.countTotal(),
-    farmQuery.modelQuery
+    farmQuery.modelQuery.lean(),
   ]);
-  return { meta, farms };
+
+  const farmRows = farms as unknown as Array<TFarm & { _id: unknown }>;
+  const farmsWithRole = farmRows.map((farm) => ({
+    ...farm,
+    membershipRole:
+      roleByFarm.get(String(farm._id)) ??
+      (ownerIdOf(farm.ownerId) === String(user._id) ? FarmMemberRoles.OWNER : undefined),
+  }));
+  return { meta, farms: farmsWithRole };
 };
 
-const getFarmForMember = async (farmId: string, requesterUserId: string) => {
+const FARM_MANAGEMENT_ROLES: TFarmMemberRole[] = [
+  FarmMemberRoles.OWNER,
+  FarmMemberRoles.MANAGER,
+];
+
+const getFarmForMember = async (
+  farmId: string,
+  requesterUserId: string,
+  allowedRoles?: TFarmMemberRole[],
+) => {
   const user = await UserModel.findOne({ userId: requesterUserId, isActive: true, isDeleted: false }).select("_id");
   if (!user) {
     throw new AppError(status.FORBIDDEN, "Only an active user can access a farm profile!",);
@@ -101,10 +160,22 @@ const getFarmForMember = async (farmId: string, requesterUserId: string) => {
     throw new AppError(status.NOT_FOUND, "Farm not found!");
   }
 
-  // The owner is currently the only farm member (the FarmMember module is not implemented yet).
-  // When it lands, replace this with an active-membership lookup scoped to farm._id + user._id.
-  if (!farm.ownerId.equals(user._id)) {
-    throw new AppError(status.FORBIDDEN, "You are not a member of this farm!",);
+  //any ACTIVE membership grants read access; Farm.ownerId is authoritative for legacy
+  //farms whose Owner membership row has not been backfilled yet.
+  const membership = await FarmMemberModel.findOne({
+    farmId: farm._id,
+    userId: user._id,
+    isActive: true,
+  }).select("role");
+  const role = farm.ownerId.equals(user._id)
+    ? FarmMemberRoles.OWNER
+    : membership?.role;
+
+  if (!role) {
+    throw new AppError(status.FORBIDDEN, "You are not an active member of this farm!",);
+  }
+  if (allowedRoles && !allowedRoles.includes(role)) {
+    throw new AppError(status.FORBIDDEN, "You are not allowed to modify this farm!",);
   }
 
   return farm;
@@ -117,7 +188,7 @@ const getFarmById = async (farmId: string, requesterUserId: string): Promise<TFa
   return farm;
 };
 
-//fields a farm member is allowed to edit; identity (farmId/ownerId), status and logo are handled elsewhere
+//fields a farm owner/manager is allowed to edit; identity (farmId/ownerId), status and logo are handled elsewhere
 const UPDATABLE_FARM_FIELDS = [
   "farmName",
   "farmType",
@@ -147,7 +218,7 @@ const updateFarm = async (
   requesterUserId: string,
   payload: Record<string, unknown>,
 ): Promise<TFarm> => {
-  const farm = await getFarmForMember(farmId, requesterUserId);
+  const farm = await getFarmForMember(farmId, requesterUserId, FARM_MANAGEMENT_ROLES);
 
   if (farm.status === FarmStatuses.ARCHIVED) {
     throw new AppError(status.FORBIDDEN, "This farm is suspended and cannot be updated!",);
@@ -196,7 +267,7 @@ const updateFarmLogo = async (
   file?: Express.Multer.File,
   logoUrl?: string,
 ): Promise<TFarm> => {
-  const farm = await getFarmForMember(farmId, requesterUserId);
+  const farm = await getFarmForMember(farmId, requesterUserId, FARM_MANAGEMENT_ROLES);
 
   if (farm.status === FarmStatuses.ARCHIVED) {
     throw new AppError(status.FORBIDDEN, "This farm is suspended and cannot be updated!",);
@@ -304,19 +375,80 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
     throw new AppError(status.BAD_REQUEST, "This user already owns the farm!",);
   }
 
-  //ownerId is immutable in the schema, so the transfer must explicitly opt in to overwrite it
-  const updated = await FarmModel.findOneAndUpdate(
-    { _id: farm._id },
-    { $set: { ownerId: newOwner._id } },
-    { new: true, runValidators: true, overwriteImmutable: true },
-  );
-  if (!updated) {
-    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  //snapshot active memberships first — Mongo transactions are not available on every
+  //deployment, so a failed ownership write is compensated manually (Farm spec §12)
+  const previousOwnerMembership = await FarmMemberModel.findOne({
+    farmId: farm._id,
+    userId: farm.ownerId,
+    isActive: true,
+  })
+    .select("role isActive")
+    .lean();
+  const nextOwnerMembership = await FarmMemberModel.findOne({
+    farmId: farm._id,
+    userId: newOwner._id,
+    isActive: true,
+  })
+    .select("role isActive")
+    .lean();
+
+  let updated;
+  try {
+    //1. new owner becomes the ACTIVE Owner member (created if they never joined the farm)
+    await FarmMemberServices.ensureOwnerMembership(farm._id, newOwner._id, {
+      assignedBy: requester._id,
+    });
+    //2. old owner keeps a normal membership role (spec: Old Owner -> Manager)
+    if (previousOwnerMembership) {
+      await FarmMemberModel.updateOne(
+        { _id: previousOwnerMembership._id },
+        { $set: { role: FarmMemberRoles.MANAGER } },
+        { runValidators: true },
+      );
+    }
+    //3. ownerId is immutable in the schema, so the transfer must opt in to overwrite it
+    updated = await FarmModel.findOneAndUpdate(
+      { _id: farm._id },
+      { $set: { ownerId: newOwner._id } },
+      { new: true, runValidators: true, overwriteImmutable: true },
+    );
+    if (!updated) {
+      throw new AppError(status.NOT_FOUND, "Farm not found!");
+    }
+  } catch (error) {
+    //best-effort compensation: restore both membership roles as they were before step 1
+    if (previousOwnerMembership) {
+      await FarmMemberModel.updateOne(
+        { _id: previousOwnerMembership._id },
+        {
+          $set: {
+            role: previousOwnerMembership.role,
+            isActive: previousOwnerMembership.isActive,
+          },
+        },
+      ).catch(() => undefined);
+    }
+    if (nextOwnerMembership) {
+      await FarmMemberModel.updateOne(
+        { _id: nextOwnerMembership._id },
+        {
+          $set: {
+            role: nextOwnerMembership.role,
+            isActive: nextOwnerMembership.isActive,
+          },
+        },
+      ).catch(() => undefined);
+    } else {
+      await FarmMemberModel.deleteOne({
+        farmId: farm._id,
+        userId: newOwner._id,
+        isActive: true,
+        role: FarmMemberRoles.OWNER,
+      }).catch(() => undefined);
+    }
+    throw error;
   }
 
-  //NOTE: the FarmMember module does not exist yet. Once it lands, this transfer must also
-  //demote the previous owner's membership and promote the new owner's to Owner, inside a
-  //transaction with the ownerId change above.
   await updated.populate("ownerId", "userId fullName email phone profilePicture");
   return updated;
 };
