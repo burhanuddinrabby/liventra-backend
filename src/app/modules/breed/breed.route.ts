@@ -1,6 +1,7 @@
 import express from "express";
 import auth from "../../middlewares/auth.js";
 import validateRequest from "../../middlewares/validateRequest.js";
+import parseMultipartData from "../../middlewares/parseMultipartData.js";
 import { SystemRoles } from "../auth/auth.constants.js";
 import { upload } from "../../utils/uploadImage.js";
 import { BreedController } from "./breed.controller.js";
@@ -13,10 +14,13 @@ const authenticatedRoles = [
   SystemRoles.USER,
 ];
 
-// POST /api/v1/breeds — platform administrators only
+// POST /api/v1/breeds — platform administrators only.
+// Accepts JSON, or multipart/form-data with an "image" file and the payload as a JSON string in "data".
 breedRouter.post(
   "/",
   auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),
+  upload.single("image"),
+  parseMultipartData,
   validateRequest(breedValidations.createBreedValidation),
   BreedController.createBreed,
 );

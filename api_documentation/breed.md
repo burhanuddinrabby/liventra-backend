@@ -87,7 +87,9 @@ Breed-level values are reference data only. Actual milk, weight, feeding and hea
 
 - **URL**: `POST /api/v1/breeds`
 - **Access**: `admin` / `superAdmin`
-- **Headers**: `Content-Type: application/json`
+- **Headers**: `application/json`, or `multipart/form-data` when sending an `image` file
+
+JSON body:
 
 ```json
 {
@@ -108,6 +110,23 @@ Breed-level values are reference data only. Actual milk, weight, feeding and hea
   "isActive": true
 }
 ```
+
+Multipart alternative — the image file goes in the `image` field and the same JSON payload is
+serialised into the `data` field (the `image` key inside `data` is optional):
+
+```text
+image: <file>                      (optional)
+data:  {"breedName":"Holstein Friesian","origin":"Netherlands","category":"Exotic","purpose":"Dairy"}
+```
+
+Image resolution priority:
+
+1. `image` file — checked and uploaded to Cloudinary; the returned `secure_url` is stored and the
+   local temp file is deleted.
+2. `image` URL in the body — stored as-is when no file is sent.
+3. Otherwise `image` is stored as an empty string.
+
+A non-file request with `Content-Type: application/json` behaves exactly as before.
 
 **Required**: `breedName`, `origin`, `category`, `purpose`.
 

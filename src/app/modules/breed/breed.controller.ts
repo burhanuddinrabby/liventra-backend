@@ -11,6 +11,7 @@ const isPlatformAdmin = (role?: string): boolean =>
 const createBreed = catchAsync(async (req: Request, res: Response) => {
   const breed = await BreedServices.createBreed(
     req.body as Record<string, unknown>,
+    req.file,
   );
   sendResponse(res, {
     statusCode: status.CREATED,

@@ -27,7 +27,8 @@ const createBreedValidation = z.object({
     heatTolerance: z.enum(Object.values(ResistanceLevels)).optional(),
     temperament: z.enum(Object.values(Temperaments)).optional(),
     colorPattern: z.string().trim().max(100).optional(),
-    image: z.string().trim().min(1).optional(),
+    //a file upload is handled before validation; this only covers the body-supplied URL
+    image: z.string().trim().optional(),
     diseaseResistance: z.enum(Object.values(ResistanceLevels)).optional(),
     isNative: z.boolean().optional(),
     description: z.string().trim().max(2000).optional(),

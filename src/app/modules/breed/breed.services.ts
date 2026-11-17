@@ -197,7 +197,10 @@ const toDuplicateKeyError = (error: unknown): AppError | null => {
   return null;
 };
 
-const createBreed = async (payload: TBreedPayload): Promise<TBreed> => {
+const createBreed = async (
+  payload: TBreedPayload,
+  file?: Express.Multer.File,
+): Promise<TBreed> => {
   const fields = pickBreedFields(payload, CREATABLE_BREED_FIELDS);
 
   const breedName = fields.breedName as string | undefined;
@@ -236,11 +239,24 @@ const createBreed = async (payload: TBreedPayload): Promise<TBreed> => {
   await assertBreedNameAvailable(breedName);
 
   const breedCode = await generateBreedCode();
+
+  //priority: uploaded image (Cloudinary URL) > image URL from the body > empty
+  let image =
+    typeof fields.image === "string" ? (fields.image as string).trim() : "";
+  if (file) {
+    //cloudinary public_id must not contain path separators
+    const safeCode = breedCode.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const uploaded = await uploadImageToCloudinary(`${safeCode}-image`, file.path);
+    const uploadedUrl = uploaded?.secure_url as string | undefined;
+    if (uploadedUrl) image = uploadedUrl;
+  }
+
   const breedData = {
     ...fields,
     breedName,
     origin,
     breedCode,
+    image,
     isNative: (fields.isNative as boolean | undefined) ?? false,
     isActive: (fields.isActive as boolean | undefined) ?? true,
   } as TBreed;
