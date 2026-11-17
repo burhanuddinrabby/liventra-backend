@@ -197,7 +197,7 @@ const updateProfile = async (userId: string, payload: Partial<TUser>): Promise<T
     //     throw new AppError(status.FORBIDDEN, 'You are not authorized to update this profile!');
     // }
     const updated = await UserModel.findOneAndUpdate({ userId }, modifiedData, {
-        new: true,
+        returnDocument: 'after',
         // runValidators: true
     }).select('-password');
     if (!updated) {
@@ -218,7 +218,7 @@ const updateProfilePicture = async (userId: string, file: any, url: string | und
         const updated = await UserModel.findOneAndUpdate(
             { userId },
             { profilePicture: image?.secure_url as string },
-            { new: true }
+            { returnDocument: 'after' }
         ).select('-password');
         if (!updated) {
             throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
@@ -229,7 +229,7 @@ const updateProfilePicture = async (userId: string, file: any, url: string | und
         const updated = await UserModel.findOneAndUpdate(
             { userId },
             { profilePicture: url },
-            { new: true }
+            { returnDocument: 'after' }
         ).select('-password');
         if (!updated) {
             throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
@@ -259,7 +259,7 @@ const updateSystemRole = async (userId: string, systemRole: string): Promise<TUs
     const updated = await UserModel.findOneAndUpdate(
         { userId },
         { systemRole },
-        { new: true }
+        { returnDocument: 'after' }
     ).select('-password');
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
@@ -276,7 +276,7 @@ const toggleActive = async (userId: string): Promise<TUser> => {
     const updated = await UserModel.findOneAndUpdate(
         { userId },
         { isActive: !user.isActive },
-        { new: true }
+        { returnDocument: 'after' }
     ).select('-password');
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
@@ -289,7 +289,7 @@ const deleteUser = async (userId: string): Promise<TUser> => {
     const updated = await UserModel.findOneAndUpdate(
         { userId },
         { isActive: false, isDeleted: true },
-        { new: true }
+        { returnDocument: 'after' }
     ).select('-password');
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found!');

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { userRouter } from "../modules/auth/auth.route.js";
+import { breedRouter } from "../modules/breed/breed.route.js";
 import { farmRouter } from "../modules/farm/farm.route.js";
 
 const router = Router();
@@ -18,6 +19,10 @@ const moduleRoutes: TRoute[] = [
   {
     path: "/farms",
     route: farmRouter,
+  },
+  {
+    path: "/breeds",
+    route: breedRouter,
   },
 ];
 

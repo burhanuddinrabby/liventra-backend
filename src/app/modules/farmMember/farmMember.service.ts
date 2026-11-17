@@ -256,7 +256,7 @@ const ensureOwnerMembership = async (
     },
     {
       upsert: true,
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
       setDefaultsOnInsert: true,
     },
@@ -606,7 +606,7 @@ const updateMember = async (
   return FarmMemberModel.findOneAndUpdate(
     { _id: member._id, farmId: access.farm._id },
     updateDocument,
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   )
     .select("+nid +salary")
     .populate("userId", USER_POPULATE_FIELDS);
@@ -674,7 +674,7 @@ const toggleMemberActive = async (
   return FarmMemberModel.findOneAndUpdate(
     { _id: member._id, farmId: access.farm._id },
     { $set: { isActive: nextActive } },
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   )
     .select("+nid +salary")
     .populate("userId", USER_POPULATE_FIELDS);

@@ -251,7 +251,7 @@ const updateFarm = async (
   const updated = await FarmModel.findOneAndUpdate(
     { _id: farm._id },
     { $set: updates },
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   );
   if (!updated) {
     throw new AppError(status.NOT_FOUND, "Farm not found!");
@@ -289,7 +289,7 @@ const updateFarmLogo = async (
   const updated = await FarmModel.findByIdAndUpdate(
     farm._id,
     { $set: { logo } },
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   );
   if (!updated) {
     throw new AppError(status.NOT_FOUND, "Farm not found!");
@@ -327,7 +327,7 @@ const updateFarmStatus = async (farmId: string, statusValue: TFarmStatus,): Prom
   const updated = await FarmModel.findOneAndUpdate(
     { _id: farm._id },
     { $set: { status: statusValue } },
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   );
   if (!updated) {
     throw new AppError(status.NOT_FOUND, "Farm not found!");
@@ -410,7 +410,7 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
     updated = await FarmModel.findOneAndUpdate(
       { _id: farm._id },
       { $set: { ownerId: newOwner._id } },
-      { new: true, runValidators: true, overwriteImmutable: true },
+      { returnDocument: 'after', runValidators: true, overwriteImmutable: true },
     );
     if (!updated) {
       throw new AppError(status.NOT_FOUND, "Farm not found!");

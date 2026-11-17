@@ -10,6 +10,7 @@ import catchAsync from "../utils/catchAsync.js";
 import config from "../config/index.js";
 import type { JwtPayload } from "jsonwebtoken";
 import jwt from "jsonwebtoken";
+import { UserModel } from "../modules/auth/auth.model.js";
 
 const auth = (...roles: string[]) => {
     return catchAsync(async (req, res, next) => {
@@ -35,8 +36,11 @@ const auth = (...roles: string[]) => {
         //     }
         // }
 
-        const userRole = (decoded)?.role;
-        if (roles && !roles.includes(userRole)) {
+        const user = await UserModel.findOne({ userId: decoded.userId });
+        if (!user || !user.isActive) {
+            throw new AppError(status.NOT_FOUND, '-User not found or inactive!');
+        }
+        if (roles.length > 0 && !roles.includes(user?.systemRole ?? '')) {
             throw new AppError(status.FORBIDDEN, 'You\'re not authorized!');
         }
         req.user = decoded;
