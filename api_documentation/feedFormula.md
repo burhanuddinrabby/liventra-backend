@@ -7,8 +7,8 @@ same as every other module (`{ success, message, data, meta? }` / `{ success: fa
 
 A FeedFormula is a **reusable, global feeding blueprint** (no `farmId`): for a breed + stage + purpose +
 season (+ optional weight / milk-yield / ADG targets) it says which `FeedIngredient`s to combine and how
-much. It is not a per-animal recommendation — `FeedRecommendation` (not built yet) will reference it via
-`formulaId` and keep its own snapshot.
+much. It is not a per-animal recommendation — `FeedRecommendation` (see `feedRecommendation.md`) references it via
+`formulaId` and keeps its own snapshot.
 
 **Historical protection:** formulas are never hard-deleted while referenced, and scientific changes to a
 formula already used by a recommendation create a **new version record** instead of overwriting it.

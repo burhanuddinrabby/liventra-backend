@@ -80,8 +80,8 @@ export const FEED_FORMULA_SCIENTIFIC_FIELDS = [
 //descriptive fields that may always be edited in place
 export const FEED_FORMULA_METADATA_FIELDS = ["formulaName", "description"] as const;
 
-// Collections that hold a reference to a formula. FeedRecommendation is not built
-// yet, so it is queried by raw collection name (a missing collection counts 0).
+// Collections that hold a reference to a formula, queried by raw collection name
+// (a missing collection counts 0). `feedrecommendations` = FeedRecommendationModel.
 export const FEED_FORMULA_REFERENCE_SOURCES = [
   { key: "feedRecommendations", collection: "feedrecommendations", path: "formulaId" },
 ] as const;

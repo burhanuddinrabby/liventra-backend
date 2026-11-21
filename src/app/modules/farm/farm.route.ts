@@ -7,6 +7,10 @@ import { farmValidations } from "./farm.validations.js";
 import { upload } from "../../utils/uploadImage.js";
 import { farmMemberRouter } from "../farmMember/farmMember.route.js";
 import { animalRouter } from "../animal/animal.route.js";
+import {
+  animalFeedRecommendationRouter,
+  feedRecommendationRouter,
+} from "../feedRecommendation/feedRecommendation.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -38,6 +42,11 @@ farmRouter.get("/my-farms", auth(...authenticatedRoles), FarmController.getMyFar
 
 // /api/v1/farms/:farmId/members — FarmMember module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/members", farmMemberRouter);
+
+// /api/v1/farms/:farmId/feed-recommendations — FeedRecommendation module (mergeParams gives it :farmId)
+farmRouter.use("/:farmId/feed-recommendations", feedRecommendationRouter);
+// animal timeline; mounted before the animal router so it is matched first
+farmRouter.use("/:farmId/animals/:animalId/feed-recommendations", animalFeedRecommendationRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);
