@@ -3,6 +3,7 @@ import { userRouter } from "../modules/auth/auth.route.js";
 import { breedRouter } from "../modules/breed/breed.route.js";
 import { farmRouter } from "../modules/farm/farm.route.js";
 import { feedIngredientRouter } from "../modules/feedIngredient/feedIngredient.route.js";
+import { feedFormulaRouter } from "../modules/feedFormula/feedFormula.route.js";
 
 const router = Router();
 
@@ -28,6 +29,10 @@ const moduleRoutes: TRoute[] = [
   {
     path: "/feed-ingredients",
     route: feedIngredientRouter,
+  },
+  {
+    path: "/feed-formulas",
+    route: feedFormulaRouter,
   },
 ];
 
