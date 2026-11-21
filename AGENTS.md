@@ -1,6 +1,6 @@
 # AGENTS.md — Liventra Backend
 
-Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4 + JWT, single package, ESM (`"type": "module"`). No README. `G:\Liventra\Frontend` is currently an empty placeholder — there is no frontend app in this checkout.
+Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4 + JWT, single package, ESM (`"type": "module"`). No README. The client is the separate Next.js repo at `../frontend` (see `../frontend/CLAUDE.md`); its `app/lib/api.ts` mirrors this API's response envelope, error shape, and multipart field names, so keep it in mind when changing those.
 
 ## Commands (run from this `Backend/` directory)
 
@@ -15,7 +15,7 @@ Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4
 
 - `src/server.ts` connects Mongo (`MONGO_URL`), fire-and-forgets `seedSuperAdmin()` and `FarmMemberServices.syncOwnedFarmMemberships()`, then listens on `PORT`. It is not the Express app — `src/app.ts` is.
 - `src/app.ts`: `express.json` + cookie-parser + `cors({ origin: '*', credentials: true })`, mounts `/api/v1` → `src/app/routes/index.ts`. The wildcard origin is invalid for credentialed browser requests; use an explicit origin list if cookies must work from a browser. Keep the catch-all as `app.all('{*splat}', notFound)` — path-to-regexp v8 syntax; `'*'` throws.
-- Mounted routes: `/users` (auth/profile/admin), `/farms` (farm CRUD + nested `/:farmId/members` → `farmMemberRouter`), `/breeds`.
+- Mounted routes: `/users` (auth/profile/admin), `/farms` (farm CRUD + nested `/:farmId/members` → `farmMemberRouter` and `/:farmId/animals` → `animalRouter`), `/breeds`.
 - Modules live in `src/app/modules/<name>/`: `*.route.ts`, `.controller.ts`, `.services.ts`, `.model.ts`, `.validation(s).ts`, `.interface.ts`, `.constants.ts`, `.utils.ts`; each exports an object (`userRouter`, `UserController`, `UserServices`, `farmValidations`).
 - `breed` is the newest and cleanest reference: service-layer field whitelisting/coercion, generated immutable `breedCode`, deactivate-instead-of-delete. `farm` remains the reference for farm-scoped RBAC; its unimplemented routes are commented out inline in route/controller/services — uncomment and implement rather than rewriting.
 - `src/app/builder/QueryBuilder.ts` drives list endpoints: `.search([...]).filter().sort().paginate().fields()`, then `await Promise.all([query.countTotal(), query.modelQuery])`. `search()` interpolates `searchTerm` straight into `$regex` — escape user input first (see `escapeRegex` in `breed.utils.ts`).
@@ -36,7 +36,7 @@ Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4
 - `globalErrorHandler` maps ZodError, Mongoose `ValidationError`/`CastError`, duplicate key `11000`, `TokenExpiredError`, `AppError`; response is `{ success, message, errorSources, err, stack }` (stack only when `NODE_ENV=development`).
 - Zod is **v4**: use top-level `z.email()`, not `z.string().email()`.
 - `validateRequest(schema)` validates only `{ body, cookies }` and **discards** the parsed result: coercions/defaults/transforms never reach handlers and unknown keys aren't stripped. Whitelist/coerce in the service (breed pattern) or filter manually. It never validates params or query, so services must parse those themselves (`QueryBuilder` receives raw strings).
-- Multipart field names differ by module: users `file`, farms `logo`, breeds `image`. User/farm creation put the JSON body in `data` and parse it inline (`JSON.parse(req.body.data)`, no guard).
+- Multipart field names differ by module: users `file`, farms `logo`, breeds `image`, animals `profilePhoto` + `gallery`. User/farm creation put the JSON body in `data` and parse it inline (`JSON.parse(req.body.data)`, no guard).
 - Uploads: multer writes to `<cwd>/uploads` (not git-ignored), `uploadImageToCloudinary(name, path)` uploads then deletes the local file.
 
 ## Gotchas
@@ -55,5 +55,5 @@ Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4
 
 - `.opencode/Business Logic MDs/Liventra_Business_Logic_NN_<Domain>.md` — 28 numbered domain specs (`01_User` … `28_Report`); read the relevant one before building a module (local only, `.opencode` is git-ignored).
 - `.opencode/previous contexts/Liventra_Master_Context.md` — project handoff doc; its "CURRENT WORKING DECISIONS" outranks older SRS/model docs. Other files in that folder are historical ChatGPT exports.
-- `api_documentation/{auth,farm,farmMember,breed}.md` — hand-written endpoint docs; keep the matching file in sync when routes change.
+- `api_documentation/{auth,farm,farmMember,breed,animal}.md` — hand-written endpoint docs; keep the matching file in sync when routes change.
 - `todos.md` — current dev todos (Bengali).

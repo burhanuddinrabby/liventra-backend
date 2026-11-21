@@ -6,6 +6,7 @@ import { FarmController } from "./farm.controller.js";
 import { farmValidations } from "./farm.validations.js";
 import { upload } from "../../utils/uploadImage.js";
 import { farmMemberRouter } from "../farmMember/farmMember.route.js";
+import { animalRouter } from "../animal/animal.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -37,6 +38,9 @@ farmRouter.get("/my-farms", auth(...authenticatedRoles), FarmController.getMyFar
 
 // /api/v1/farms/:farmId/members — FarmMember module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/members", farmMemberRouter);
+
+// /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
+farmRouter.use("/:farmId/animals", animalRouter);
 
 // GET /api/v1/farms/:farmId — any active member of the targeted farm
 farmRouter.get(

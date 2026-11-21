@@ -718,6 +718,9 @@ const deleteMember = async (
 };
 
 export const FarmMemberServices = {
+  //shared farm-scoped authorization helpers (reused by the Animal module)
+  resolveFarmAccess,
+  getActorRole,
   ensureOwnerMembership,
   syncOwnedFarmMemberships,
   createMember,
