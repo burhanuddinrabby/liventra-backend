@@ -15,14 +15,14 @@ Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4
 
 - `src/server.ts` connects Mongo (`MONGO_URL`), fire-and-forgets `seedSuperAdmin()` and `FarmMemberServices.syncOwnedFarmMemberships()`, then listens on `PORT`. It is not the Express app — `src/app.ts` is.
 - `src/app.ts`: `express.json` + cookie-parser + `cors({ origin: '*', credentials: true })`, mounts `/api/v1` → `src/app/routes/index.ts`. The wildcard origin is invalid for credentialed browser requests; use an explicit origin list if cookies must work from a browser. Keep the catch-all as `app.all('{*splat}', notFound)` — path-to-regexp v8 syntax; `'*'` throws.
-- Mounted routes: `/users` (auth/profile/admin), `/farms` (farm CRUD + nested `/:farmId/members` → `farmMemberRouter` and `/:farmId/animals` → `animalRouter`), `/breeds`.
+- Mounted routes: `/users` (auth/profile/admin), `/farms` (farm CRUD + nested `/:farmId/members` → `farmMemberRouter` and `/:farmId/animals` → `animalRouter`), `/breeds`, `/feed-ingredients` (global master catalog; audited writes via `auditLog/auditLog.utils.ts` `recordAuditLog()`, best-effort, atomic `LOG-000001` counter).
 - Modules live in `src/app/modules/<name>/`: `*.route.ts`, `.controller.ts`, `.services.ts`, `.model.ts`, `.validation(s).ts`, `.interface.ts`, `.constants.ts`, `.utils.ts`; each exports an object (`userRouter`, `UserController`, `UserServices`, `farmValidations`).
 - `breed` is the newest and cleanest reference: service-layer field whitelisting/coercion, generated immutable `breedCode`, deactivate-instead-of-delete. `farm` remains the reference for farm-scoped RBAC; its unimplemented routes are commented out inline in route/controller/services — uncomment and implement rather than rewriting.
 - `src/app/builder/QueryBuilder.ts` drives list endpoints: `.search([...]).filter().sort().paginate().fields()`, then `await Promise.all([query.countTotal(), query.modelQuery])`. `search()` interpolates `searchTerm` straight into `$regex` — escape user input first (see `escapeRegex` in `breed.utils.ts`).
 
 ## IDs, auth and farm RBAC
 
-- Generated display IDs: users `U-YY-NNNN`, farms `FARM-NNNNN`, breeds `BREED-00001`. All are last-row+1 and non-atomic; the unique index is the real guard, so retry on duplicate key 11000.
+- Generated display IDs: users `U-YY-NNNN`, farms `FARM-NNNNN`, breeds `BREED-00001`, feed ingredients `ING-00001`. All are last-row+1 and non-atomic; the unique index is the real guard, so retry on duplicate key 11000.
 - JWTs carry `{ userId, role }` where `userId` is the custom string. `Farm.ownerId` and `FarmMember.userId` are ObjectIds — services look the user up (`UserModel.findOne({ userId })`) and use `_id`.
 - `auth(...roles)` verifies the token, then loads the user and rejects inactive accounts; role checks use the DB `systemRole`, not the token. `auth()` with no roles allows any logged-in user. It does not check `isDeleted`, and `/users/login` does not check active/deleted before issuing tokens.
 - Farm-scoped authorization is service-layer: `resolveFarmAccess` in `farmMember.service.ts` requires an active `FarmMember` row. Only platform `superAdmin` and the farm's `Farm.ownerId` account bypass it (treated as `Owner`); platform `admin` does **not** bypass. Owner/Manager manage members; only Owner (or superAdmin/owner account) deletes.
@@ -55,5 +55,5 @@ Livestock-farm management REST API: TypeScript + Express 5 + Mongoose 9 + Zod v4
 
 - `.opencode/Business Logic MDs/Liventra_Business_Logic_NN_<Domain>.md` — 28 numbered domain specs (`01_User` … `28_Report`); read the relevant one before building a module (local only, `.opencode` is git-ignored).
 - `.opencode/previous contexts/Liventra_Master_Context.md` — project handoff doc; its "CURRENT WORKING DECISIONS" outranks older SRS/model docs. Other files in that folder are historical ChatGPT exports.
-- `api_documentation/{auth,farm,farmMember,breed,animal}.md` — hand-written endpoint docs; keep the matching file in sync when routes change.
+- `api_documentation/{auth,farm,farmMember,breed,animal,feedIngredient}.md` — hand-written endpoint docs; keep the matching file in sync when routes change.
 - `todos.md` — current dev todos (Bengali).
