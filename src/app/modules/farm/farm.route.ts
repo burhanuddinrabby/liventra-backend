@@ -11,6 +11,7 @@ import {
   animalFeedRecommendationRouter,
   feedRecommendationRouter,
 } from "../feedRecommendation/feedRecommendation.route.js";
+import { animalFeedRecordRouter, feedRecordRouter } from "../feedRecord/feedRecord.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -47,6 +48,11 @@ farmRouter.use("/:farmId/members", farmMemberRouter);
 farmRouter.use("/:farmId/feed-recommendations", feedRecommendationRouter);
 // animal timeline; mounted before the animal router so it is matched first
 farmRouter.use("/:farmId/animals/:animalId/feed-recommendations", animalFeedRecommendationRouter);
+
+// /api/v1/farms/:farmId/feed-records — FeedRecord module (actual feeding + inventory deduction)
+farmRouter.use("/:farmId/feed-records", feedRecordRouter);
+// animal feeding history; mounted before the animal router so it is matched first
+farmRouter.use("/:farmId/animals/:animalId/feed-records", animalFeedRecordRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);
