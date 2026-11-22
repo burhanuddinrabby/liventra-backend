@@ -12,6 +12,7 @@ import {
   feedRecommendationRouter,
 } from "../feedRecommendation/feedRecommendation.route.js";
 import { animalFeedRecordRouter, feedRecordRouter } from "../feedRecord/feedRecord.route.js";
+import { animalMilkRecordRouter, milkRecordRouter } from "../milkRecord/milkRecord.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -53,6 +54,11 @@ farmRouter.use("/:farmId/animals/:animalId/feed-recommendations", animalFeedReco
 farmRouter.use("/:farmId/feed-records", feedRecordRouter);
 // animal feeding history; mounted before the animal router so it is matched first
 farmRouter.use("/:farmId/animals/:animalId/feed-records", animalFeedRecordRouter);
+
+// /api/v1/farms/:farmId/milk-records — MilkRecord module (actual milk production per session)
+farmRouter.use("/:farmId/milk-records", milkRecordRouter);
+// animal milk history; mounted before the animal router so it is matched first
+farmRouter.use("/:farmId/animals/:animalId/milk-records", animalMilkRecordRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);
