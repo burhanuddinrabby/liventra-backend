@@ -1,11 +1,12 @@
 // AuditLog enums (Model 24). Values are display strings stored as-is.
 // Only a few modules write audit rows today; the full finalized lists are kept so
 // later modules can log without a schema change.
-// FeedIngredient / Breed are master-data entities added on top of the Model 24 list.
+// FeedIngredient / Breed / Vaccine are master-data entities added on top of the Model 24 list.
 export const AuditEntityTypes = {
   ANIMAL: "Animal",
   BREED: "Breed",
   FEED_INGREDIENT: "FeedIngredient",
+  VACCINE: "Vaccine",
   FEED_FORMULA: "FeedFormula",
   FEED_RECOMMENDATION: "FeedRecommendation",
   FEED_RECORD: "FeedRecord",

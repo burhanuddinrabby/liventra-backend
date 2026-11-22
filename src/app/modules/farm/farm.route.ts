@@ -14,6 +14,7 @@ import {
 import { animalFeedRecordRouter, feedRecordRouter } from "../feedRecord/feedRecord.route.js";
 import { animalMilkRecordRouter, milkRecordRouter } from "../milkRecord/milkRecord.route.js";
 import { animalWeightRecordRouter, weightRecordRouter } from "../weightRecord/weightRecord.route.js";
+import { animalVaccinationRouter, vaccinationRouter } from "../vaccination/vaccination.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -65,6 +66,11 @@ farmRouter.use("/:farmId/animals/:animalId/milk-records", animalMilkRecordRouter
 farmRouter.use("/:farmId/weight-records", weightRecordRouter);
 // animal growth trajectory; mounted before the animal router so it is matched first
 farmRouter.use("/:farmId/animals/:animalId/weight-records", animalWeightRecordRouter);
+
+// /api/v1/farms/:farmId/vaccinations — Vaccination module (schedules, doses, compliance)
+farmRouter.use("/:farmId/vaccinations", vaccinationRouter);
+// animal immunization history; mounted before the animal router so it is matched first
+farmRouter.use("/:farmId/animals/:animalId/vaccinations", animalVaccinationRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);
