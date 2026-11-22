@@ -6,6 +6,7 @@ import { feedIngredientRouter } from "../modules/feedIngredient/feedIngredient.r
 import { feedFormulaRouter } from "../modules/feedFormula/feedFormula.route.js";
 import { vaccineRouter } from "../modules/vaccine/vaccine.route.js";
 import { diseaseRouter } from "../modules/disease/disease.route.js";
+import { medicineRouter } from "../modules/medicine/medicine.route.js";
 
 const router = Router();
 
@@ -43,6 +44,10 @@ const moduleRoutes: TRoute[] = [
   {
     path: "/diseases",
     route: diseaseRouter,
+  },
+  {
+    path: "/medicines",
+    route: medicineRouter,
   },
 ];
 
