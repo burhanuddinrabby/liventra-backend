@@ -1,6 +1,6 @@
 import status from "http-status";
 import { isValidObjectId } from "mongoose";
-import type { HydratedDocument } from "mongoose";
+import type { HydratedDocument, Types } from "mongoose";
 import AppError from "../../errors/AppError.js";
 import QueryBuilder from "../../builder/QueryBuilder.js";
 import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
@@ -13,6 +13,10 @@ import {
 } from "./breed.constants.js";
 import type { TBreed } from "./breed.interface.js";
 import { escapeRegex, generateBreedCode } from "./breed.utils.js";
+import { AnimalModel } from "../animal/animal.model.js";
+import { FeedFormulaModel } from "../feedFormula/feedFormula.model.js";
+import { recordAuditLog, type TAuditContext } from "../auditLog/auditLog.utils.js";
+import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 
 type TBreedPayload = Record<string, unknown>;
 
@@ -587,6 +591,85 @@ const updateBreedStatus = async (
   return updated;
 };
 
+//----- delete: deactivate (soft, default) or permanent (only when unreferenced) -----
+
+export type TBreedUsage = {
+  animals: number;
+  feedFormulas: number;
+  total: number;
+};
+
+//every collection whose rows point at a breed — a hard delete would orphan them
+const countBreedUsage = async (breedId: Types.ObjectId): Promise<TBreedUsage> => {
+  const [animals, feedFormulas] = await Promise.all([
+    AnimalModel.countDocuments({ breedId }),
+    FeedFormulaModel.countDocuments({ breedId }),
+  ]);
+  return { animals, feedFormulas, total: animals + feedFormulas };
+};
+
+//GET /breeds/:id/usage — lets the delete dialog decide whether "permanent" is allowed
+const getBreedUsage = async (id: string) => {
+  const breed = await getBreedById(id);
+  const usage = await countBreedUsage(breed._id);
+  return {
+    _id: breed._id,
+    breedCode: breed.breedCode,
+    breedName: breed.breedName,
+    isActive: breed.isActive,
+    usage,
+    canHardDelete: usage.total === 0,
+  };
+};
+
+/**
+ * DELETE /breeds/:id — admin & superAdmin only.
+ *  - default (`?hard` absent/false): suspend = deactivate (same as PATCH /:id/status false)
+ *  - `?hard=true`: removes the document from the database, but only when no
+ *    animal or feed formula references it (409 otherwise — deactivate instead).
+ */
+const deleteBreed = async (
+  id: string,
+  query: Record<string, unknown>,
+  context: TAuditContext,
+) => {
+  const breed = await getBreedById(id);
+  const hard = parseBooleanField(query.hard) === true;
+  const usage = await countBreedUsage(breed._id);
+
+  if (!hard) {
+    const deactivated = breed.isActive
+      ? await BreedModel.findByIdAndUpdate(
+          breed._id,
+          { $set: { isActive: false } },
+          { returnDocument: "after", runValidators: true },
+        )
+      : breed;
+    return { mode: "deactivated" as const, breed: deactivated, usage };
+  }
+
+  if (usage.total > 0) {
+    throw new AppError(
+      status.CONFLICT,
+      `Cannot permanently delete: breed is used by ${usage.animals} animal(s) and ${usage.feedFormulas} feed formula(s). Deactivate it instead.`,
+    );
+  }
+
+  const oldData = breed.toObject() as unknown as Record<string, unknown>;
+  await BreedModel.deleteOne({ _id: breed._id });
+  //best-effort trail of who removed the master record (breed edits are not audited otherwise)
+  await recordAuditLog({
+    context,
+    entityType: AuditEntityTypes.BREED,
+    entityId: breed._id,
+    action: AuditActions.DELETE,
+    module: AuditModules.ADMINISTRATION,
+    event: "Breed Permanently Deleted",
+    oldData,
+  });
+  return { mode: "deleted" as const, breed: null, usage };
+};
+
 export const BreedServices = {
   createBreed,
   getAllBreeds,
@@ -598,4 +681,6 @@ export const BreedServices = {
   updateBreed,
   updateBreedImage,
   updateBreedStatus,
+  getBreedUsage,
+  deleteBreed,
 };

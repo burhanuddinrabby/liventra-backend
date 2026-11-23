@@ -17,8 +17,9 @@ List endpoints also return a `meta` object. Errors come from `globalErrorHandler
 ```
 
 Breed is **global master/reference data**: it has no `farmId`, is not guarded by `FarmMember`, and is
-referenced by `Animal.breedId` and `FeedFormula.breedId`. Breeds are **deactivated**, never hard-deleted,
-so existing animal and formula records keep working.
+referenced by `Animal.breedId` and `FeedFormula.breedId`. Breeds are normally **deactivated** (suspended)
+so existing animal and formula records keep working; an admin may **permanently delete** a breed only
+when no animal or feed formula references it (`DELETE /breeds/:id?hard=true`).
 
 ## Enums
 
@@ -80,6 +81,8 @@ Breed-level values are reference data only. Actual milk, weight, feeding and hea
 | PATCH | `/api/v1/breeds/:id` | `admin` / `superAdmin` |
 | PATCH | `/api/v1/breeds/:id/image` | `admin` / `superAdmin` |
 | PATCH | `/api/v1/breeds/:id/status` | `admin` / `superAdmin` |
+| GET | `/api/v1/breeds/:id/usage` | `admin` / `superAdmin` |
+| DELETE | `/api/v1/breeds/:id` | `admin` / `superAdmin` |
 
 ---
 
@@ -421,8 +424,52 @@ If both are sent the uploaded file wins. Providing neither returns `400`.
 **Successful response** (200): `"Breed deactivated successfully!"` or `"Breed activated successfully!"`
 with the updated breed object.
 
-There is deliberately **no** `DELETE /breeds/:id`. Hard deletion would break `Animal.breedId` and
-`FeedFormula.breedId`; deactivation is the supported lifecycle end.
+---
+
+### Breed usage
+
+- **URL**: `GET /api/v1/breeds/:id/usage`
+- **Access**: `admin` / `superAdmin`
+
+Reference counts used by the delete dialog to decide whether a permanent delete is allowed.
+
+```json
+{
+  "success": true,
+  "message": "Breed usage retrieved successfully!",
+  "data": {
+    "_id": "6710a1c2a1b2c3d4e5f60701",
+    "breedCode": "BREED-00001",
+    "breedName": "Red Chittagong",
+    "isActive": true,
+    "usage": { "animals": 0, "feedFormulas": 0, "total": 0 },
+    "canHardDelete": true
+  }
+}
+```
+
+---
+
+### Delete a breed (suspend or permanent)
+
+- **URL**: `DELETE /api/v1/breeds/:id` (optional `?hard=true`)
+- **Access**: `admin` / `superAdmin`
+
+| Mode | Behaviour |
+|---|---|
+| default (no `hard`) | **Suspend** — sets `isActive: false` (same as `PATCH /:id/status`). Idempotent. |
+| `?hard=true` | **Permanent** — removes the breed document from the database. Allowed only when `usage.total === 0`; otherwise `409`. Written to the audit log (`Breed Permanently Deleted`). |
+
+```json
+{
+  "success": true,
+  "message": "Breed permanently deleted!",
+  "data": { "mode": "deleted", "breed": null, "usage": { "animals": 0, "feedFormulas": 0, "total": 0 } }
+}
+```
+
+A suspend returns `"mode": "deactivated"` with the updated breed and the message
+`"Breed deactivated (suspended) successfully!"`.
 
 ---
 
@@ -435,6 +482,7 @@ There is deliberately **no** `DELETE /breeds/:id`. Hard deletion would break `An
 | No / invalid token | 401 | `You're not authorized!` |
 | Non-admin write attempt | 403 | `You're not authorized!` |
 | Unknown breed | 404 | `Breed not found!` |
+| Permanent delete of a referenced breed | 409 | `Cannot permanently delete: breed is used by N animal(s) and M feed formula(s). Deactivate it instead.` |
 | Duplicate breed name | 409 | `Breed name already exists!` |
 | Duplicate breed code (retry) | 409 | `Breed code already exists, please retry!` |
 

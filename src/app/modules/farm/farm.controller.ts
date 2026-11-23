@@ -4,6 +4,7 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import type { TFarmStatus } from "./farm.interface.js";
 import { FarmServices } from "./farm.services.js";
+import { auditContextFromRequest } from "../auditLog/auditLog.utils.js";
 
 const createFarm = catchAsync(async (req: Request, res: Response) => {
   const farm = await FarmServices.createFarm(req.user.userId, req?.file, req.body);
@@ -97,6 +98,39 @@ const updateFarmStatus = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+//GET /farms/:farmId/deletion-impact — record counts a permanent delete would remove
+const getFarmDeletionImpact = catchAsync(async (req: Request, res: Response) => {
+  const impact = await FarmServices.getFarmDeletionImpact(
+    req.params.farmId as string,
+    req.user.userId,
+  );
+  sendResponse(res, {
+    statusCode: status.OK,
+    success: true,
+    message: "Farm deletion impact retrieved successfully!",
+    data: impact,
+  });
+});
+
+//DELETE /farms/:farmId?mode=suspend|permanent — farm owner or platform admin
+const deleteFarm = catchAsync(async (req: Request, res: Response) => {
+  const result = await FarmServices.deleteFarm(
+    req.params.farmId as string,
+    req.user.userId,
+    req.query.mode,
+    auditContextFromRequest(req),
+  );
+  sendResponse(res, {
+    statusCode: status.OK,
+    success: true,
+    message:
+      result.mode === "deleted"
+        ? "Farm permanently deleted!"
+        : "Farm suspended successfully!",
+    data: result,
+  });
+});
+
 const transferFarmOwnership = catchAsync(async (req: Request, res: Response) => {
   const farm = await FarmServices.transferFarmOwnership(
     req.params.farmId as string,
@@ -150,7 +184,9 @@ export const FarmController = {
   updateFarmLogo,
   updateFarmStatus,
   transferFarmOwnership,
-  /* 
+  getFarmDeletionImpact,
+  deleteFarm,
+  /*
   deactivateFarm,
   reactivateFarm, */
 };

@@ -52,6 +52,8 @@ status:    Setup | Active | Inactive | Suspended
 | PATCH | `/api/v1/farms/:farmId/logo` | Farm Owner / Manager |
 | PATCH | `/api/v1/farms/:farmId/status` | `admin` / `superAdmin` |
 | POST | `/api/v1/farms/:farmId/transfer-ownership` | Farm Owner / `superAdmin` |
+| GET | `/api/v1/farms/:farmId/deletion-impact` | Farm Owner account / `admin` / `superAdmin` |
+| DELETE | `/api/v1/farms/:farmId?mode=suspend\|permanent` | Farm Owner account / `admin` / `superAdmin` |
 
 ---
 
@@ -349,6 +351,65 @@ Business rules:
 
 ---
 
+### 9. Farm deletion impact
+
+- **URL**: `GET /api/v1/farms/:farmId/deletion-impact`
+- **Access**: the farm's owner account (`Farm.ownerId`) or `admin` / `superAdmin`. Managers and other
+  members get `403`.
+
+Returns the number of farm-scoped records a permanent delete would remove and whether it is allowed.
+
+```json
+{
+  "success": true,
+  "message": "Farm deletion impact retrieved successfully!",
+  "data": {
+    "_id": "6710a1c2a1b2c3d4e5f60799",
+    "farmId": "FARM-00001",
+    "farmName": "Green Valley Dairy",
+    "status": "Suspended",
+    "counts": {
+      "feedRecords": 120, "milkRecords": 340, "weightRecords": 45, "vaccinations": 60,
+      "treatments": 12, "feedRecommendations": 18, "inventoryTransactions": 75,
+      "inventories": 9, "animals": 40, "members": 5, "total": 724
+    },
+    "canPermanentDelete": true
+  }
+}
+```
+
+---
+
+### 10. Delete a farm (suspend or permanent)
+
+- **URL**: `DELETE /api/v1/farms/:farmId?mode=suspend|permanent`
+- **Access**: the farm's owner account (own farm only) or `admin` / `superAdmin` (any farm)
+
+| `mode` | Behaviour |
+|---|---|
+| `suspend` (default) | Sets `status: "Suspended"`. The farm becomes read-only; only a platform admin can reactivate it with `PATCH /:farmId/status`. `400` if already suspended. |
+| `permanent` | Removes the farm **and all of its farm-scoped data** from the database: feed records, milk records, weight records, vaccinations, treatments, feed recommendations, inventory + inventory transactions, animals and memberships. **Only a `Suspended` farm can be permanently deleted** — otherwise `409`. Not reversible. |
+
+- Both actions are written to the audit log (`Farm Suspended` / `Farm Permanently Deleted`); audit
+  rows are kept as the evidence trail.
+- Children are deleted first and the farm document last, so a failure part-way leaves the farm in place
+  and the same request can be retried.
+- Any other `mode` value → `400`.
+
+**Successful response** (200):
+
+```json
+{
+  "success": true,
+  "message": "Farm permanently deleted!",
+  "data": { "mode": "deleted", "farm": null, "deleted": { "animals": 40, "members": 5, "total": 724 } }
+}
+```
+
+A suspend returns `"mode": "suspended"`, the updated farm and `"deleted": null`.
+
+---
+
 ## Farm ↔ FarmMember consistency
 
 - Creating a farm automatically creates the creator's active `Owner` membership.
@@ -365,4 +426,4 @@ Business rules:
 | `400` | Invalid body, invalid date, no updatable fields, already-owned farm |
 | `403` | Not an active farm member, insufficient farm role, unverified owner, duplicate setup farm/name, suspended farm |
 | `404` | Farm or user not found |
-| `409` | Reserved for membership conflicts (see `farmMember.md`) |
+| `409` | Permanent delete of a farm that is not Suspended; membership conflicts (see `farmMember.md`) |

@@ -16,6 +16,8 @@ export const AuditEntityTypes = {
   MILK_RECORD: "MilkRecord",
   VACCINATION: "Vaccination",
   TREATMENT: "Treatment",
+  BREEDING: "Breeding",
+  PREGNANCY: "Pregnancy",
   INVENTORY: "Inventory",
   INVENTORY_TRANSACTION: "InventoryTransaction",
   EXPENSE: "Expense",

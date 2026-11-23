@@ -83,7 +83,21 @@ breedRouter.patch(
   BreedController.updateBreedImage,
 );
 
-// PATCH /api/v1/breeds/:id/status — activate or deactivate (no hard delete)
+// GET /api/v1/breeds/:id/usage — animals/feed formulas referencing the breed (admins only)
+breedRouter.get(
+  "/:id/usage",
+  auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),
+  BreedController.getBreedUsage,
+);
+
+// DELETE /api/v1/breeds/:id — deactivate (default) or ?hard=true permanent delete when unreferenced
+breedRouter.delete(
+  "/:id",
+  auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),
+  BreedController.deleteBreed,
+);
+
+// PATCH /api/v1/breeds/:id/status — activate or deactivate
 breedRouter.patch(
   "/:id/status",
   auth(SystemRoles.ADMIN, SystemRoles.SUPER_ADMIN),

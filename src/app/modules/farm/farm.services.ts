@@ -1,5 +1,6 @@
 import status from "http-status";
 import { isValidObjectId } from "mongoose";
+import type { Model, Types } from "mongoose";
 import AppError from "../../errors/AppError.js";
 import { UserModel } from "../auth/auth.model.js";
 import { SystemRoles } from "../auth/auth.constants.js";
@@ -13,6 +14,18 @@ import { FarmMemberModel } from "../farmMember/farmMember.model.js";
 import { FarmMemberRoles } from "../farmMember/farmMember.constants.js";
 import { FarmMemberServices } from "../farmMember/farmMember.service.js";
 import type { TFarmMemberRole } from "../farmMember/farmMember.interface.js";
+import { AnimalModel } from "../animal/animal.model.js";
+import { FeedRecommendationModel } from "../feedRecommendation/feedRecommendation.model.js";
+import { FeedRecordModel } from "../feedRecord/feedRecord.model.js";
+import { MilkRecordModel } from "../milkRecord/milkRecord.model.js";
+import { WeightRecordModel } from "../weightRecord/weightRecord.model.js";
+import { VaccinationModel } from "../vaccination/vaccination.model.js";
+import { TreatmentModel } from "../treatment/treatment.model.js";
+import { BreedingModel } from "../breeding/breeding.model.js";
+import { PregnancyModel } from "../pregnancy/pregnancy.model.js";
+import { InventoryModel, InventoryTransactionModel } from "../inventory/inventory.model.js";
+import { recordAuditLog, type TAuditContext } from "../auditLog/auditLog.utils.js";
+import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 
 type TFarmPayload = Omit<TFarm, "farmId" | "ownerId" | "status"> & {
   establishedDate?: string | Date;
@@ -453,6 +466,179 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
   return updated;
 };
 
+//----- delete: suspend (soft, default) or permanent (only for an already Suspended farm) -----
+
+export const FarmDeleteModes = {
+  SUSPEND: "suspend",
+  PERMANENT: "permanent",
+} as const;
+
+/**
+ * Every farm-scoped collection removed by a permanent delete, in delete order
+ * (leaf records first, memberships last). Audit logs are intentionally kept as
+ * the platform's evidence trail; the deletion itself is audited.
+ */
+const FARM_DATA_SOURCES = [
+  { key: "feedRecords", model: FeedRecordModel },
+  { key: "milkRecords", model: MilkRecordModel },
+  { key: "weightRecords", model: WeightRecordModel },
+  { key: "vaccinations", model: VaccinationModel },
+  { key: "treatments", model: TreatmentModel },
+  { key: "pregnancies", model: PregnancyModel },
+  { key: "breedings", model: BreedingModel },
+  { key: "feedRecommendations", model: FeedRecommendationModel },
+  { key: "inventoryTransactions", model: InventoryTransactionModel },
+  { key: "inventories", model: InventoryModel },
+  { key: "animals", model: AnimalModel },
+  { key: "members", model: FarmMemberModel },
+] as const;
+
+type TFarmDataKey = (typeof FARM_DATA_SOURCES)[number]["key"];
+export type TFarmDataCounts = Record<TFarmDataKey, number> & { total: number };
+
+//loose model type so the heterogeneous Mongoose models can share one loop
+const farmScopedModel = (model: unknown) => model as Model<{ farmId: Types.ObjectId }>;
+
+const countFarmData = async (farmObjectId: Types.ObjectId): Promise<TFarmDataCounts> => {
+  const counts = await Promise.all(
+    FARM_DATA_SOURCES.map((source) =>
+      farmScopedModel(source.model).countDocuments({ farmId: farmObjectId }),
+    ),
+  );
+  const result = { total: 0 } as TFarmDataCounts;
+  FARM_DATA_SOURCES.forEach((source, index) => {
+    const count = counts[index] ?? 0;
+    result[source.key] = count;
+    result.total += count;
+  });
+  return result;
+};
+
+/**
+ * Who may suspend / permanently delete a farm:
+ *  - platform admin or superAdmin (any farm)
+ *  - the farm's owner account (Farm.ownerId) — their own farm only
+ * Managers and other members never can.
+ */
+const getFarmForDeletion = async (farmId: string, requesterUserId: string) => {
+  const requester = await UserModel.findOne({ userId: requesterUserId, isActive: true, isDeleted: false }).select("_id systemRole");
+  if (!requester) {
+    throw new AppError(status.FORBIDDEN, "Only an active user can delete a farm!");
+  }
+
+  const farm = await FarmModel.findOne(getFarmFilter(farmId));
+  if (!farm) {
+    throw new AppError(status.NOT_FOUND, "Farm not found!");
+  }
+
+  const isPlatformAdmin =
+    requester.systemRole === SystemRoles.ADMIN || requester.systemRole === SystemRoles.SUPER_ADMIN;
+  if (!isPlatformAdmin && !farm.ownerId.equals(requester._id)) {
+    throw new AppError(status.FORBIDDEN, "Only the farm owner or a platform admin can delete this farm!");
+  }
+
+  return farm;
+};
+
+//GET /farms/:farmId/deletion-impact — what a permanent delete would remove (owner / admins)
+const getFarmDeletionImpact = async (farmId: string, requesterUserId: string) => {
+  const farm = await getFarmForDeletion(farmId, requesterUserId);
+  const counts = await countFarmData(farm._id);
+  return {
+    _id: farm._id,
+    farmId: farm.farmId,
+    farmName: farm.farmName,
+    status: farm.status,
+    counts,
+    //business rule: only a Suspended farm may be permanently deleted
+    canPermanentDelete: farm.status === FarmStatuses.ARCHIVED,
+  };
+};
+
+/**
+ * DELETE /farms/:farmId?mode=suspend|permanent
+ *  - suspend (default): status → Suspended. The farm becomes read-only; only a
+ *    platform admin can reactivate it (PATCH /:farmId/status).
+ *  - permanent: removes the farm and all of its farm-scoped data from the
+ *    database. Allowed only when the farm is already Suspended (409 otherwise).
+ *    Children are deleted first and the Farm document last, so a failure part-way
+ *    leaves the farm in place and the same request can simply be retried.
+ */
+const deleteFarm = async (
+  farmId: string,
+  requesterUserId: string,
+  modeValue: unknown,
+  context: TAuditContext,
+) => {
+  const mode = modeValue === undefined || modeValue === "" ? FarmDeleteModes.SUSPEND : String(modeValue);
+  if (mode !== FarmDeleteModes.SUSPEND && mode !== FarmDeleteModes.PERMANENT) {
+    throw new AppError(status.BAD_REQUEST, "mode must be either 'suspend' or 'permanent'!");
+  }
+
+  const farm = await getFarmForDeletion(farmId, requesterUserId);
+
+  if (mode === FarmDeleteModes.SUSPEND) {
+    if (farm.status === FarmStatuses.ARCHIVED) {
+      throw new AppError(status.BAD_REQUEST, "This farm is already suspended!");
+    }
+    const updated = await FarmModel.findOneAndUpdate(
+      { _id: farm._id },
+      { $set: { status: FarmStatuses.ARCHIVED } },
+      { returnDocument: "after", runValidators: true },
+    );
+    if (!updated) {
+      throw new AppError(status.NOT_FOUND, "Farm not found!");
+    }
+    await recordAuditLog({
+      context,
+      farmId: farm._id,
+      entityType: AuditEntityTypes.FARM,
+      entityId: farm._id,
+      action: AuditActions.ARCHIVE,
+      module: AuditModules.FARM,
+      event: "Farm Suspended",
+      oldData: { status: farm.status },
+      newData: { status: FarmStatuses.ARCHIVED },
+      changedFields: ["status"],
+    });
+    await updated.populate("ownerId", "userId fullName email phone");
+    return { mode: "suspended" as const, farm: updated, deleted: null };
+  }
+
+  if (farm.status !== FarmStatuses.ARCHIVED) {
+    throw new AppError(
+      status.CONFLICT,
+      "Only a suspended farm can be permanently deleted. Suspend the farm first.",
+    );
+  }
+
+  //InventoryTransaction rows are "never delete" ledger evidence for a living farm;
+  //a permanent farm delete is the one explicit exception.
+  const deleted = { total: 0 } as TFarmDataCounts;
+  for (const source of FARM_DATA_SOURCES) {
+    const result = await farmScopedModel(source.model).deleteMany({ farmId: farm._id });
+    deleted[source.key] = result.deletedCount ?? 0;
+    deleted.total += deleted[source.key];
+  }
+
+  const oldData = farm.toObject() as unknown as Record<string, unknown>;
+  await FarmModel.deleteOne({ _id: farm._id });
+
+  await recordAuditLog({
+    context,
+    farmId: farm._id,
+    entityType: AuditEntityTypes.FARM,
+    entityId: farm._id,
+    action: AuditActions.DELETE,
+    module: AuditModules.FARM,
+    event: "Farm Permanently Deleted",
+    oldData,
+    newData: { deletedRecords: deleted },
+  });
+
+  return { mode: "deleted" as const, farm: null, deleted };
+};
+
 export const FarmServices = {
   createFarm,
   getMyFarms,
@@ -462,4 +648,6 @@ export const FarmServices = {
   getAllFarms,
   updateFarmStatus,
   transferFarmOwnership,
+  getFarmDeletionImpact,
+  deleteFarm,
 };

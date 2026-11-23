@@ -16,6 +16,7 @@ import { animalMilkRecordRouter, milkRecordRouter } from "../milkRecord/milkReco
 import { animalWeightRecordRouter, weightRecordRouter } from "../weightRecord/weightRecord.route.js";
 import { animalVaccinationRouter, vaccinationRouter } from "../vaccination/vaccination.route.js";
 import { animalTreatmentRouter, treatmentRouter } from "../treatment/treatment.route.js";
+import { animalBreedingRouter, breedingRouter } from "../breeding/breeding.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -78,6 +79,11 @@ farmRouter.use("/:farmId/treatments", treatmentRouter);
 // animal treatment history; mounted before the animal router so it is matched first
 farmRouter.use("/:farmId/animals/:animalId/treatments", animalTreatmentRouter);
 
+// /api/v1/farms/:farmId/breedings — Breeding module (heat / insemination events, pregnancy-check results)
+farmRouter.use("/:farmId/breedings", breedingRouter);
+// animal breeding history; mounted before the animal router so it is matched first
+farmRouter.use("/:farmId/animals/:animalId/breedings", animalBreedingRouter);
+
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);
 
@@ -120,7 +126,22 @@ farmRouter.post(
   validateRequest(farmValidations.transferOwnershipValidation),
   FarmController.transferFarmOwnership,
 );
-/* 
+
+// GET /api/v1/farms/:farmId/deletion-impact — farm owner or admin/superAdmin (checked in the service)
+farmRouter.get(
+  "/:farmId/deletion-impact",
+  auth(...authenticatedRoles),
+  FarmController.getFarmDeletionImpact,
+);
+
+// DELETE /api/v1/farms/:farmId?mode=suspend|permanent — farm owner or admin/superAdmin.
+// suspend (default) sets status Suspended; permanent removes a Suspended farm and all its data.
+farmRouter.delete(
+  "/:farmId",
+  auth(...authenticatedRoles),
+  FarmController.deleteFarm,
+);
+/*
 
 // PATCH /api/v1/farms/:id/deactivate
 farmRouter.patch(

@@ -4,6 +4,7 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import { SystemRoles } from "../auth/auth.constants.js";
 import { BreedServices } from "./breed.services.js";
+import { auditContextFromRequest } from "../auditLog/auditLog.utils.js";
 
 const isPlatformAdmin = (role?: string): boolean =>
   role === SystemRoles.ADMIN || role === SystemRoles.SUPER_ADMIN;
@@ -132,6 +133,35 @@ const updateBreedStatus = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+//GET /breeds/:id/usage — reference counts that decide whether a permanent delete is allowed
+const getBreedUsage = catchAsync(async (req: Request, res: Response) => {
+  const usage = await BreedServices.getBreedUsage(req.params.id as string);
+  sendResponse(res, {
+    statusCode: status.OK,
+    success: true,
+    message: "Breed usage retrieved successfully!",
+    data: usage,
+  });
+});
+
+//DELETE /breeds/:id — deactivate by default, ?hard=true removes an unreferenced breed for good
+const deleteBreed = catchAsync(async (req: Request, res: Response) => {
+  const result = await BreedServices.deleteBreed(
+    req.params.id as string,
+    req.query as Record<string, unknown>,
+    auditContextFromRequest(req),
+  );
+  sendResponse(res, {
+    statusCode: status.OK,
+    success: true,
+    message:
+      result.mode === "deleted"
+        ? "Breed permanently deleted!"
+        : "Breed deactivated (suspended) successfully!",
+    data: result,
+  });
+});
+
 export const BreedController = {
   createBreed,
   getAllBreeds,
@@ -143,4 +173,6 @@ export const BreedController = {
   updateBreed,
   updateBreedImage,
   updateBreedStatus,
+  getBreedUsage,
+  deleteBreed,
 };
