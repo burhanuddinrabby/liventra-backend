@@ -18,6 +18,7 @@ import { animalVaccinationRouter, vaccinationRouter } from "../vaccination/vacci
 import { animalTreatmentRouter, treatmentRouter } from "../treatment/treatment.route.js";
 import { animalBreedingRouter, breedingRouter } from "../breeding/breeding.route.js";
 import { animalPregnancyRouter, pregnancyRouter } from "../pregnancy/pregnancy.route.js";
+import { inventoryRouter, inventoryTransactionRouter } from "../inventory/inventory.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -89,6 +90,11 @@ farmRouter.use("/:farmId/animals/:animalId/breedings", animalBreedingRouter);
 farmRouter.use("/:farmId/pregnancies", pregnancyRouter);
 // animal pregnancy history; mounted before the animal router so it is matched first
 farmRouter.use("/:farmId/animals/:animalId/pregnancies", animalPregnancyRouter);
+
+// Inventory (Model 19) — farm stock items; nested so farmId is always explicit
+farmRouter.use("/:farmId/inventory", inventoryRouter);
+// Inventory_Transaction (Model 20) — the farm's append-only stock ledger
+farmRouter.use("/:farmId/inventory-transactions", inventoryTransactionRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);

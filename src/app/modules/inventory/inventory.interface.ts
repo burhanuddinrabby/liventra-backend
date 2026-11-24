@@ -5,6 +5,7 @@ import type {
   InventoryStatuses,
   InventoryTransactionTypes,
   InventoryUnits,
+  StockDirections,
 } from "./inventory.constants.js";
 
 export type TInventoryItemType = (typeof InventoryItemTypes)[keyof typeof InventoryItemTypes];
@@ -14,6 +15,7 @@ export type TInventoryTransactionType =
   (typeof InventoryTransactionTypes)[keyof typeof InventoryTransactionTypes];
 export type TInventoryReferenceType =
   (typeof InventoryReferenceTypes)[keyof typeof InventoryReferenceTypes];
+export type TStockDirection = (typeof StockDirections)[keyof typeof StockDirections];
 
 // Inventory (Model 19) — current stock of one farm item
 export type TInventory = {
@@ -21,7 +23,7 @@ export type TInventory = {
   farmId: Types.ObjectId;
   itemName: string;
   itemType: TInventoryItemType;
-  //FeedIngredient _id for Feed items (Medicine / Vaccine later)
+  //FeedIngredient / Medicine / Vaccine _id, by itemType; null for items with no master
   referenceId?: Types.ObjectId | null;
   category?: string;
   //changed only through InventoryTransaction rows, never edited directly
@@ -49,8 +51,15 @@ export type TInventoryTransaction = {
   inventoryId: Types.ObjectId;
   transactionType: TInventoryTransactionType;
   transactionDate: Date;
-  //always positive; transactionType gives the direction
+  //always positive; transactionType (+ direction for Adjustment / Return) gives the sign
   quantity: number;
+  /**
+   * Resolved stock direction. The final schema has no direction field, so it stays
+   * optional: rows written before this module (and by FeedRecord / Treatment /
+   * Vaccination) carry none and are read through `resolveDirection()`, which falls
+   * back to the transactionType map.
+   */
+  direction?: TStockDirection;
   unit?: TInventoryUnit;
   unitPrice?: number;
   totalAmount?: number;
@@ -62,4 +71,17 @@ export type TInventoryTransaction = {
   performedBy: Types.ObjectId;
   createdAt?: Date;
   updatedAt?: Date;
+};
+
+//an Inventory row with its identity, as returned by lean() reads
+export type TInventoryDoc = TInventory & {
+  _id: Types.ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type TInventoryTransactionDoc = TInventoryTransaction & {
+  _id: Types.ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
 };

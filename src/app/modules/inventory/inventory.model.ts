@@ -5,6 +5,7 @@ import {
   InventoryStatuses,
   InventoryTransactionTypes,
   InventoryUnits,
+  StockDirections,
 } from "./inventory.constants.js";
 import type { TInventory, TInventoryTransaction } from "./inventory.interface.js";
 
@@ -45,11 +46,19 @@ inventorySchema.index({ farmId: 1, itemType: 1, referenceId: 1 });
 inventorySchema.index({ farmId: 1, status: 1 });
 //FeedIngredient /usage counts read this path
 inventorySchema.index({ referenceId: 1 });
+//farm list / detail-by-code lookups (spec 19 §122)
+inventorySchema.index({ farmId: 1, inventoryCode: 1 });
+inventorySchema.index({ farmId: 1, itemType: 1, status: 1 });
+//expiry dashboards and the ?expiringDays filter
+inventorySchema.index({ farmId: 1, expiryDate: 1 });
+//item-name search inside one farm
+inventorySchema.index({ farmId: 1, itemName: 1 });
 
 export const InventoryModel = model<TInventory>("Inventory", inventorySchema);
 
 // Inventory_Transaction (Model 20). A saved transaction is ledger evidence: every
 // field is immutable and there is no update/delete path ("Transaction (never delete)").
+// Mistakes are corrected with an offsetting row (POST /inventory-transactions/:id/reverse).
 const inventoryTransactionSchema = new Schema<TInventoryTransaction>(
   {
     transactionNo: { type: String, required: true, unique: true, immutable: true, trim: true, uppercase: true },
@@ -63,6 +72,8 @@ const inventoryTransactionSchema = new Schema<TInventoryTransaction>(
     },
     transactionDate: { type: Date, required: true, immutable: true },
     quantity: { type: Number, required: true, min: 0, immutable: true },
+    //resolved In / Out; only stored for types whose direction is not fixed by the type
+    direction: { type: String, enum: Object.values(StockDirections), immutable: true },
     unit: { type: String, enum: Object.values(InventoryUnits), immutable: true },
     unitPrice: { type: Number, min: 0, immutable: true },
     totalAmount: { type: Number, min: 0, immutable: true },
@@ -78,6 +89,10 @@ const inventoryTransactionSchema = new Schema<TInventoryTransaction>(
 //ledger of one source document (e.g. all stock movements of a FeedRecord)
 inventoryTransactionSchema.index({ referenceType: 1, referenceId: 1 });
 inventoryTransactionSchema.index({ farmId: 1, inventoryId: 1, transactionDate: -1 });
+//transaction reports and the farm-wide ledger list (spec 20 §106)
+inventoryTransactionSchema.index({ farmId: 1, transactionType: 1, transactionDate: -1 });
+inventoryTransactionSchema.index({ farmId: 1, transactionDate: -1 });
+inventoryTransactionSchema.index({ farmId: 1, performedBy: 1, transactionDate: -1 });
 
 export const InventoryTransactionModel = model<TInventoryTransaction>(
   "InventoryTransaction",
