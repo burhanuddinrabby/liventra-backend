@@ -1192,7 +1192,8 @@ const updateLifecycle = async (
   if (remarks) set.remarks = remarks;
 
   // TODO(DeviceAssignment): close active IoT device assignments when leaving Active (Model 26).
-  // TODO(Income): Sold may create an "Animal Sale" income record (Model 22).
+  //Sold here books no money: POST /incomes/animal-sale does both, and /incomes/reconciliation
+  //flags animals marked Sold without an income.
   // TODO(AuditLog): "Animal Sold" / "Animal Archived" / "Animal Reactivated" / "Animal Marked Dead".
   return applyAnimalUpdate(animal, access, set);
 };

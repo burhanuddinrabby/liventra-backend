@@ -24,6 +24,9 @@ import { TreatmentModel } from "../treatment/treatment.model.js";
 import { BreedingModel } from "../breeding/breeding.model.js";
 import { PregnancyModel } from "../pregnancy/pregnancy.model.js";
 import { InventoryModel, InventoryTransactionModel } from "../inventory/inventory.model.js";
+import { ExpenseModel } from "../expense/expense.model.js";
+import { IncomeModel } from "../income/income.model.js";
+import { removeFarmAttachments } from "../finance/finance.utils.js";
 import { recordAuditLog, type TAuditContext } from "../auditLog/auditLog.utils.js";
 import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 
@@ -479,6 +482,8 @@ export const FarmDeleteModes = {
  * the platform's evidence trail; the deletion itself is audited.
  */
 const FARM_DATA_SOURCES = [
+  { key: "expenses", model: ExpenseModel },
+  { key: "incomes", model: IncomeModel },
   { key: "feedRecords", model: FeedRecordModel },
   { key: "milkRecords", model: MilkRecordModel },
   { key: "weightRecords", model: WeightRecordModel },
@@ -620,6 +625,9 @@ const deleteFarm = async (
     deleted[source.key] = result.deletedCount ?? 0;
     deleted.total += deleted[source.key];
   }
+
+  //receipt files of the deleted expenses / incomes
+  await removeFarmAttachments(farm._id);
 
   const oldData = farm.toObject() as unknown as Record<string, unknown>;
   await FarmModel.deleteOne({ _id: farm._id });

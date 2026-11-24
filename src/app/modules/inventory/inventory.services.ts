@@ -7,6 +7,7 @@ import type { TAuditAction } from "../auditLog/auditLog.interface.js";
 import { AuditLogModel } from "../auditLog/auditLog.model.js";
 import { recordAuditLog } from "../auditLog/auditLog.utils.js";
 import type { TAuditContext } from "../auditLog/auditLog.utils.js";
+import { ExpenseModel } from "../expense/expense.model.js";
 import { FarmStatuses } from "../farm/farm.constants.js";
 import { FarmModel } from "../farm/farm.model.js";
 import { FeedIngredientModel } from "../feedIngredient/feedIngredient.model.js";
@@ -26,7 +27,7 @@ import {
   parseNumber,
   parsePaging,
 } from "../feedRecord/feedRecord.utils.js";
-import type { TPayload } from "../feedRecord/feedRecord.utils.js";
+import type { TPayload, TUndo } from "../feedRecord/feedRecord.utils.js";
 import { MedicineModel } from "../medicine/medicine.model.js";
 import { VaccineModel } from "../vaccine/vaccine.model.js";
 import {
@@ -109,6 +110,20 @@ const REFERENCE_TYPES = Object.values(InventoryReferenceTypes) as string[];
 const DIRECTIONS = Object.values(StockDirections) as string[];
 
 const sessionOpts = (session: ClientSession | null) => (session ? { session } : {});
+
+/**
+ * Extra work done inside the stock unit of work, right after the ledger row is written
+ * (the Expense purchase workflow books its linked expense here, so stock and money are
+ * saved together or not at all).
+ */
+type TAfterTransaction = (
+  // eslint-disable-next-line no-unused-vars
+  transaction: TInventoryTransactionDoc,
+  // eslint-disable-next-line no-unused-vars
+  session: ClientSession | null,
+  // eslint-disable-next-line no-unused-vars
+  undo: TUndo,
+) => Promise<void>;
 
 /* -------------------------------------------------------------------------- */
 /*                         Farm-scoped authorization                          */
@@ -503,6 +518,7 @@ const createInventoryItem = async (
   requesterUserId: string,
   body: TPayload,
   context?: TAuditContext,
+  afterTransaction?: TAfterTransaction,
 ) => {
   const access = await resolveAccess(farmId, requesterUserId);
   requireRole(access, InventoryPermissions.CREATE, "register inventory items");
@@ -647,6 +663,7 @@ const createInventoryItem = async (
       if (!trx) throw new AppError(status.INTERNAL_SERVER_ERROR, "Opening stock transaction could not be created!");
       undo.push(() => InventoryTransactionModel.deleteOne({ _id: trx._id }));
       openingTransaction = trx.toObject() as TInventoryTransactionDoc;
+      if (afterTransaction) await afterTransaction(openingTransaction, session, undo);
     }
 
     return { item: item.toObject() as TInventoryDoc, openingTransaction };
@@ -1982,6 +1999,7 @@ const createTransaction = async (
   requesterUserId: string,
   body: TPayload,
   context?: TAuditContext,
+  afterTransaction?: TAfterTransaction,
 ) => {
   const access = await resolveAccess(farmId, requesterUserId);
   requireRole(access, InventoryPermissions.TRANSACTION_READ, "record stock movements");
@@ -2077,8 +2095,10 @@ const createTransaction = async (
     if (!isValidObjectId(String(body.referenceId))) {
       throw new AppError(status.BAD_REQUEST, "referenceId must be a valid id!");
     }
-    //the Expense module (Model 21) is not built yet, so the id cannot be verified here
     referenceId = new Types.ObjectId(String(body.referenceId));
+    if (!(await ExpenseModel.exists({ _id: referenceId, farmId: access.farmObjectId }))) {
+      throw new AppError(status.NOT_FOUND, "Expense not found in this farm!");
+    }
   }
 
   const statusBefore = deriveInventoryStatus(item);
@@ -2166,6 +2186,8 @@ const createTransaction = async (
       await InventoryModel.updateOne({ _id: item._id }, itemUpdate, sessionOpts(session));
       undo.push(() => InventoryModel.updateOne({ _id: item._id }, previous));
     }
+
+    if (afterTransaction) await afterTransaction(trx.toObject() as TInventoryTransactionDoc, session, undo);
 
     return {
       transaction: trx.toObject() as TInventoryTransactionDoc,

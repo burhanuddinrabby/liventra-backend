@@ -19,6 +19,8 @@ import { animalTreatmentRouter, treatmentRouter } from "../treatment/treatment.r
 import { animalBreedingRouter, breedingRouter } from "../breeding/breeding.route.js";
 import { animalPregnancyRouter, pregnancyRouter } from "../pregnancy/pregnancy.route.js";
 import { inventoryRouter, inventoryTransactionRouter } from "../inventory/inventory.route.js";
+import { expenseRouter } from "../expense/expense.route.js";
+import { financeRouter, incomeRouter } from "../income/income.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -95,6 +97,11 @@ farmRouter.use("/:farmId/animals/:animalId/pregnancies", animalPregnancyRouter);
 farmRouter.use("/:farmId/inventory", inventoryRouter);
 // Inventory_Transaction (Model 20) — the farm's append-only stock ledger
 farmRouter.use("/:farmId/inventory-transactions", inventoryTransactionRouter);
+
+//finance: expenses, incomes and the profit / loss report
+farmRouter.use("/:farmId/expenses", expenseRouter);
+farmRouter.use("/:farmId/incomes", incomeRouter);
+farmRouter.use("/:farmId/finance", financeRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);

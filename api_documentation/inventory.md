@@ -579,10 +579,7 @@ the stock never disagree.
   health modules then pick the row expiring first.
 - **No `reservedStock`.** A feed recommendation suggests a quantity, it does not reserve it.
 - **No Supplier master.** `supplierName` is a string on both the item and each transaction.
-- **No Expense link yet.** A purchase accepts `referenceType: "Expense"` + `referenceId`, but Expense
-  (Model 21) is not built, so the id cannot be verified and no Expense row is created. Avoid double
-  counting: when Expense arrives, the financial record is the Expense, and the inventory transaction is
-  the stock record.
+- **Expense link.** A purchase may carry `referenceType: "Expense"` + `referenceId` (verified in this farm). Recording a purchase here creates no Expense; `POST /expenses/purchase` does both at once, and `GET /expenses/reconciliation` lists purchases without one (see `expense.md`).
 - **No Notification rows.** Low-stock / out-of-stock alerts are returned by the API (`alert`,
   `/inventory/alerts`, `dashboard-summary`) until Model 23 exists.
 - **No scheduler.** `POST /inventory/sync-statuses` is the manual stand-in for a nightly expiry job.
