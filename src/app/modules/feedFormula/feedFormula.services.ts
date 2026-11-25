@@ -1015,7 +1015,7 @@ const getFormulaAuditLogs = async (ref: string, query: TPayload) => {
   const [total, logs] = await Promise.all([
     AuditLogModel.countDocuments(filter),
     AuditLogModel.find(filter)
-      .select("-__v -ipAddress -userAgent")
+      .select("-__v -ipAddress -userAgent -browser -operatingSystem -location")
       .populate("userId", "userId fullName systemRole")
       .sort({ createdAt: -1, _id: -1 })
       .skip((page - 1) * limit)

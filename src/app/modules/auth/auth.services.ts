@@ -12,10 +12,36 @@ import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
 import { sendMails } from "../../utils/sendMail.js";
 import QueryBuilder from "../../builder/QueryBuilder.js";
 import crypto from 'crypto';
+import { AuditActions, AuditEntityTypes, AuditModules, AuditStatuses } from "../auditLog/auditLog.constants.js";
+import type { TAuditAction } from "../auditLog/auditLog.interface.js";
+import { diffForAudit } from "../auditLog/auditLog.sanitize.js";
+import { allowAuditOnce, recordAuditLog } from "../auditLog/auditLog.utils.js";
+import type { TAuditContext, TRecordAuditInput } from "../auditLog/auditLog.utils.js";
+import { executeAtomically } from "../feedRecord/feedRecord.utils.js";
 import { disconnectUser } from "../../realtime/realtime.js";
 
+type TAccount = { _id: TRecordAuditInput["entityId"]; userId: string };
+
+//account history has no farm; `actor` is set when the request carries no token (register, login, reset)
+const accountEvent = (
+    context: TAuditContext | undefined,
+    account: TAccount | null,
+    action: TAuditAction,
+    event: string,
+    more: Partial<TRecordAuditInput> = {},
+    actor?: string,
+): TRecordAuditInput => ({
+    context: actor ? { ...context, actorUserId: actor } : context,
+    entityType: AuditEntityTypes.USER,
+    entityId: account?._id ?? null,
+    action,
+    module: AuditModules.AUTHENTICATION,
+    event,
+    ...more,
+});
+
 // const createUserIntoDB = async (userData: TUser) => {
-const createUserIntoDB = async (file: any, userData: TUser): Promise<TUser> => {
+const createUserIntoDB = async (file: any, userData: TUser, context?: TAuditContext): Promise<TUser> => {
     userData.userId = await generateUserId();
     if (file) {
         const imgName = `${userData?.fullName}-${userData?.userId}-img`;
@@ -27,11 +53,14 @@ const createUserIntoDB = async (file: any, userData: TUser): Promise<TUser> => {
     }
     // return userData;
     const result = await UserModel.create(userData);
+    await recordAuditLog(accountEvent(context, result, AuditActions.CREATE, 'User Registered', {
+        newData: { userId: result.userId, fullName: result.fullName, systemRole: result.systemRole },
+    }, result.userId));
     return result;
 }
 
 //login
-const loginUser = async (email: string, password: string): Promise<{
+const loginUser = async (email: string, password: string, context?: TAuditContext): Promise<{
     accessToken: string;
     refreshToken: string;
     emailVerified?: boolean;
@@ -42,6 +71,13 @@ const loginUser = async (email: string, password: string): Promise<{
     if (!byEmail) {
         const byPhone = await UserModel.findOne({ phone: email });
         if (!byPhone) {
+            //the typed email / phone is never stored; one row a minute per address
+            if (allowAuditOnce(`login:${context?.ipAddress ?? ''}`)) {
+                await recordAuditLog(accountEvent(context, null, AuditActions.LOGIN, 'Login Failed', {
+                    status: AuditStatuses.FAILED,
+                    newData: { reason: 'Unknown account' },
+                }));
+            }
             throw new AppError(status.NOT_FOUND, 'User not found!');
         }
         user = byPhone;
@@ -49,11 +85,17 @@ const loginUser = async (email: string, password: string): Promise<{
         user = byEmail;
     }
     const isValid = await bcrypt.compare(password, user.password);
+    const refused = (reason: string) => recordAuditLog(accountEvent(context, user, AuditActions.LOGIN, 'Login Failed', {
+        status: AuditStatuses.FAILED,
+        newData: { reason },
+    }, user.userId));
     if (!isValid) {
+        await refused('Wrong password');
         throw new AppError(status.FORBIDDEN, 'Wrong password!');
     }
     //after the password check, so it cannot be used to probe accounts
     if (!user.isActive || user.isDeleted) {
+        await refused('Account disabled');
         throw new AppError(status.FORBIDDEN, 'Account is inactive or deleted!');
     }
     const jwtPayload = {
@@ -62,6 +104,7 @@ const loginUser = async (email: string, password: string): Promise<{
     }
     //update last login time
     await UserModel.updateOne({ userId: user.userId }, { lastLogin: new Date() });
+    await recordAuditLog(accountEvent(context, user, AuditActions.LOGIN, 'Login Successful', {}, user.userId));
 
     const accessToken = createToken(jwtPayload, config.jwt_access_token as string, config.jwt_access_token_exp as SignOptions["expiresIn"]);
 
@@ -73,6 +116,12 @@ const loginUser = async (email: string, password: string): Promise<{
         emailVerified: user.emailVerified,
         phoneVerified: user.phoneVerified
     }
+}
+
+//the JWT stays valid until it expires; this records the sign-out (the controller clears the cookie)
+const logoutUser = async (userId: string, context?: TAuditContext): Promise<void> => {
+    const user = await UserModel.findOne({ userId }).select('_id userId').lean();
+    await recordAuditLog(accountEvent(context, user, AuditActions.LOGOUT, 'Logout'));
 }
 
 //forgot password: email a time-limited reset link (only the token hash is stored)
@@ -134,7 +183,7 @@ const forgotPassword = async (email: string): Promise<void> => {
 }
 
 //reset password using the token from the forgot-password email link (one-time use)
-const resetPassword = async (payload: { token: string; newPassword: string }): Promise<void> => {
+const resetPassword = async (payload: { token: string; newPassword: string }, context?: TAuditContext): Promise<void> => {
     let decoded;
     try {
         decoded = verifyToken(payload.token, config.jwt_refresh_token as string);
@@ -169,6 +218,7 @@ const resetPassword = async (payload: { token: string; newPassword: string }): P
         { userId: user.userId },
         { $unset: { passwordResetToken: 1, passwordResetTokenExpiry: 1 } }
     );
+    await recordAuditLog(accountEvent(context, user, AuditActions.UPDATE, 'Password Reset', {}, user.userId));
 }
 
 //get profile
@@ -181,7 +231,7 @@ const getProfile = async (userId: string): Promise<TUser> => {
 }
 
 //update basic personal information (fullName, gender, dateOfBirth, address)
-const updateProfile = async (userId: string, payload: Partial<TUser>): Promise<TUser> => {
+const updateProfile = async (userId: string, payload: Partial<TUser>, context?: TAuditContext): Promise<TUser> => {
     const user = await UserModel.findOne({ userId });
     if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
@@ -208,11 +258,22 @@ const updateProfile = async (userId: string, payload: Partial<TUser>): Promise<T
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
     }
+    const sent = (source: object) => Object.fromEntries(Object.entries(source).filter(([key]) => key in payload));
+    const changes = diffForAudit(sent(user.toObject()), sent(updated.toObject()));
+    if (changes.changedFields.length) {
+        await recordAuditLog(accountEvent(context, updated, AuditActions.UPDATE, 'Profile Updated', changes));
+    }
     return updated;
 }
 
 //update or change profile picture
-const updateProfilePicture = async (userId: string, file: any, url: string | undefined): Promise<TUser> => {
+const updateProfilePicture = async (userId: string, file: any, url: string | undefined, context?: TAuditContext): Promise<TUser> => {
+    const audited = (previous: TAccount & { profilePicture?: string | undefined }, next: string) =>
+        recordAuditLog(accountEvent(context, previous, AuditActions.UPDATE, 'Profile Picture Updated', {
+            oldData: { profilePicture: previous.profilePicture ?? null },
+            newData: { profilePicture: next },
+            changedFields: ['profilePicture'],
+        }));
     const user = await UserModel.findOne({ userId });
     if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
@@ -228,6 +289,7 @@ const updateProfilePicture = async (userId: string, file: any, url: string | und
         if (!updated) {
             throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
         }
+        await audited(user, updated.profilePicture ?? '');
         return updated;
     }
     if (url) {
@@ -239,13 +301,14 @@ const updateProfilePicture = async (userId: string, file: any, url: string | und
         if (!updated) {
             throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
         }
+        await audited(user, updated.profilePicture ?? '');
         return updated;
     }
     throw new AppError(status.BAD_REQUEST, 'No file or URL provided for profile picture update!');
 }
 
 //change password (after validating current password)
-const changePassword = async (userId: string, payload: { currentPassword: string; newPassword: string }): Promise<void> => {
+const changePassword = async (userId: string, payload: { currentPassword: string; newPassword: string }, context?: TAuditContext): Promise<void> => {
     const user = await UserModel.findOne({ userId });
     if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
@@ -257,51 +320,71 @@ const changePassword = async (userId: string, payload: { currentPassword: string
     //pre-save hook hashes the password
     user.password = payload.newPassword;
     await user.save();
+    await recordAuditLog(accountEvent(context, user, AuditActions.UPDATE, 'Password Changed'));
 }
 
+//an account change and its audit row commit or fail together
+const changeAccount = (user: TAccount, changes: Record<string, unknown>, entry: TRecordAuditInput) =>
+    executeAtomically(async (session, undo) => {
+        const previous = await UserModel.findOne({ userId: user.userId }).select(Object.keys(changes).join(' ')).session(session).lean();
+        const updated = await UserModel.findOneAndUpdate(
+            { userId: user.userId },
+            changes,
+            { returnDocument: 'after', ...(session ? { session } : {}) }
+        ).select('-password');
+        if (!updated || !previous) {
+            throw new AppError(status.NOT_FOUND, 'User not found!');
+        }
+        const { _id, ...fields } = previous as unknown as Record<string, unknown>;
+        undo.push(() => UserModel.updateOne({ _id }, { $set: fields }));
+        return updated;
+    }, {
+        trace: entry,
+        log: () => recordAuditLog(entry),
+    });
+
 //update system-level role (user, admin, superAdmin)
-const updateSystemRole = async (userId: string, systemRole: string): Promise<TUser> => {
-    const updated = await UserModel.findOneAndUpdate(
-        { userId },
-        { systemRole },
-        { returnDocument: 'after' }
-    ).select('-password');
-    if (!updated) {
+const updateSystemRole = async (userId: string, systemRole: string, context?: TAuditContext): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId }).select('_id userId systemRole').lean();
+    if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
+    const updated = await changeAccount(user, { systemRole }, accountEvent(context, user, AuditActions.UPDATE, 'System Role Changed', {
+        oldData: { systemRole: user.systemRole },
+        newData: { systemRole },
+        changedFields: ['systemRole'],
+    }));
     //live rooms were granted with the old role; the client reconnects and is checked again
     disconnectUser(updated._id);
     return updated;
 }
 
 //activate / deactivate an account
-const toggleActive = async (userId: string): Promise<TUser> => {
-    const user = await UserModel.findOne({ userId });
+const toggleActive = async (userId: string, context?: TAuditContext): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId }).select('_id userId isActive').lean();
     if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
-    const updated = await UserModel.findOneAndUpdate(
-        { userId },
-        { isActive: !user.isActive },
-        { returnDocument: 'after' }
-    ).select('-password');
-    if (!updated) {
-        throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
-    }
+    const isActive = !user.isActive;
+    const updated = await changeAccount(user, { isActive }, accountEvent(context, user, AuditActions.UPDATE, isActive ? 'User Enabled' : 'User Disabled', {
+        oldData: { isActive: user.isActive },
+        newData: { isActive },
+        changedFields: ['isActive'],
+    }));
     if (!updated.isActive) disconnectUser(updated._id);
     return updated;
 }
 
 //soft delete a user account
-const deleteUser = async (userId: string): Promise<TUser> => {
-    const updated = await UserModel.findOneAndUpdate(
-        { userId },
-        { isActive: false, isDeleted: true },
-        { returnDocument: 'after' }
-    ).select('-password');
-    if (!updated) {
+const deleteUser = async (userId: string, context?: TAuditContext): Promise<TUser> => {
+    const user = await UserModel.findOne({ userId }).select('_id userId isActive isDeleted').lean();
+    if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
+    const updated = await changeAccount(user, { isActive: false, isDeleted: true }, accountEvent(context, user, AuditActions.DELETE, 'User Deleted', {
+        oldData: { isActive: user.isActive, isDeleted: user.isDeleted },
+        newData: null,
+    }));
     disconnectUser(updated._id);
     return updated;
 }
@@ -461,6 +544,7 @@ const getUserById = async (userId: string): Promise<TUser> => {
 export const UserServices = {
     createUserIntoDB,
     loginUser,
+    logoutUser,
     forgotPassword,
     resetPassword,
     getProfile,

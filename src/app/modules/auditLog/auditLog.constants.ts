@@ -1,7 +1,8 @@
 // AuditLog enums (Model 24). Values are display strings stored as-is.
 // Only a few modules write audit rows today; the full finalized lists are kept so
 // later modules can log without a schema change.
-// FeedIngredient / Breed / Vaccine / Disease / Medicine are master-data entities added on top of the Model 24 list.
+// FeedIngredient / Breed / Vaccine / Disease / Medicine, Breeding / Pregnancy and FarmMember /
+// Device / DeviceAssignment / Report are added on top of the Model 24 list.
 export const AuditEntityTypes = {
   ANIMAL: "Animal",
   BREED: "Breed",
@@ -25,6 +26,10 @@ export const AuditEntityTypes = {
   NOTIFICATION: "Notification",
   FARM: "Farm",
   USER: "User",
+  FARM_MEMBER: "FarmMember",
+  DEVICE: "Device",
+  DEVICE_ASSIGNMENT: "DeviceAssignment",
+  REPORT: "Report",
 } as const;
 
 export const AuditActions = {
@@ -65,3 +70,8 @@ export const AuditDeviceTypes = {
 } as const;
 
 export const AUDIT_LOG_NO_PREFIX = "LOG";
+
+//read API limits
+export const AUDIT_DEFAULT_DAYS = 30;
+export const AUDIT_MAX_DAYS = 366;
+export const AUDIT_MAX_LIMIT = 100;

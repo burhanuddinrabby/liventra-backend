@@ -312,7 +312,9 @@ const start = async (farmId: string, requester: string, body: TPayload) => {
   return { access, memberId };
 };
 
-const finish = async (
+type TCreated = { _id: Types.ObjectId; incomeNo: string };
+
+const auditCreated = async (
   context: TAuditContext | undefined,
   access: TFinanceAccess,
   created: { _id: Types.ObjectId; incomeNo: string },
@@ -324,8 +326,18 @@ const finish = async (
     ...data,
     ...(override ? { amountOverrideReason: override } : {}),
   });
-  return IncomeLedger.detailById(access.farmObjectId, created._id);
 };
+
+/** Audit step of a new income (see executeAtomically). */
+const auditing = (
+  context: TAuditContext | undefined,
+  access: TFinanceAccess,
+  data: Record<string, unknown>,
+  override: string | null = null,
+) => ({
+  trace: IncomeLedger.trace(context, access.farmObjectId, null, AuditActions.CREATE, "Income Recorded"),
+  log: (created: TCreated) => auditCreated(context, access, created, data, override),
+});
 
 /** POST /incomes — Manure Sale, Insurance Claim, Government Subsidy, Other. */
 const createIncome = async (farmId: string, requester: string, body: TPayload, context?: TAuditContext) => {
@@ -360,8 +372,8 @@ const createIncome = async (farmId: string, requester: string, body: TPayload, c
     createdBy: memberId,
   };
   await assertNotDuplicate(access.farmObjectId, data, body);
-  const created = await executeAtomically((session, undo) => insert(data, session, undo));
-  return finish(context, access, created, data, override);
+  const created = await executeAtomically((session, undo) => insert(data, session, undo), auditing(context, access, data, override));
+  return IncomeLedger.detailById(access.farmObjectId, created._id);
 };
 
 /**
@@ -428,8 +440,8 @@ const createMilkSale = async (farmId: string, requester: string, body: TPayload,
       }
     }
     return insert(data, session, undo);
-  });
-  return finish(context, access, created, data, override);
+  }, auditing(context, access, data, override));
+  return IncomeLedger.detailById(access.farmObjectId, created._id);
 };
 
 /** POST /incomes/animal-sale — Income + Animal → Sold in one unit of work. */
@@ -503,10 +515,12 @@ const createAnimalSale = async (farmId: string, requester: string, body: TPayloa
       .lean();
     if (existing) throw new AppError(status.CONFLICT, `${animal.animalCode} already has a sale income (${existing.incomeNo})!`);
     return insert(data, session, undo);
-  });
-
-  if (markAsSold) {
-    await recordAuditLog({
+  }, {
+    trace: IncomeLedger.trace(context, access.farmObjectId, null, AuditActions.CREATE, "Animal Sale"),
+    log: async (created) => {
+      await auditCreated(context, access, created, data);
+      if (!markAsSold) return;
+      await recordAuditLog({
       context,
       farmId: access.farmObjectId,
       entityType: AuditEntityTypes.ANIMAL,
@@ -517,9 +531,10 @@ const createAnimalSale = async (farmId: string, requester: string, body: TPayloa
       oldData: { lifeStatus: animal.lifeStatus, isActive: animal.isActive },
       newData: { lifeStatus: AnimalLifeStatuses.SOLD, isActive: false },
       changedFields: ["lifeStatus", "isActive"],
-    });
-  }
-  return finish(context, access, created, data);
+      });
+    },
+  });
+  return IncomeLedger.detailById(access.farmObjectId, created._id);
 };
 
 /** POST /incomes/breeding-service — one service fee per breeding (more needs confirmation). */
@@ -566,8 +581,8 @@ const createBreedingService = async (farmId: string, requester: string, body: TP
       );
     }
     return insert(data, session, undo);
-  });
-  return finish(context, access, created, data);
+  }, auditing(context, access, data));
+  return IncomeLedger.detailById(access.farmObjectId, created._id);
 };
 
 /* -------------------------------------------------------------------------- */
@@ -669,17 +684,21 @@ const updateIncome = async (farmId: string, ref: string, requester: string, body
     }
     await IncomeLedger.write(access, row, pick(next), memberId, session);
     undo.push(() => IncomeModel.updateOne({ _id: row._id }, { $set: pick(row) }));
+  }, {
+    trace: IncomeLedger.trace(context, access.farmObjectId, row._id, AuditActions.UPDATE, "Income Updated"),
+    log: async () => {
+      await IncomeLedger.audit(
+        context,
+        access.farmObjectId,
+        row._id,
+        AuditActions.UPDATE,
+        changed.some((key) => FINANCIAL_FIELDS.includes(key)) ? "Income Corrected" : "Income Updated",
+        pick(row),
+        { ...pick(next), ...(reason ? { reason } : {}) },
+        changed,
+      );
+    },
   });
-  await IncomeLedger.audit(
-    context,
-    access.farmObjectId,
-    row._id,
-    AuditActions.UPDATE,
-    changed.some((key) => FINANCIAL_FIELDS.includes(key)) ? "Income Corrected" : "Income Updated",
-    pick(row),
-    { ...pick(next), ...(reason ? { reason } : {}) },
-    changed,
-  );
   return { mode: "updated" as const, changedFields: changed, income: await IncomeLedger.detailById(access.farmObjectId, row._id) };
 };
 

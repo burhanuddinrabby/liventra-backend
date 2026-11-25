@@ -11,6 +11,7 @@ import {
   DAY_MS,
   dayKey,
   escapeRegex,
+  executeAtomically,
   isBlank,
   pageMeta,
   parseBoolean,
@@ -155,6 +156,33 @@ export const createLedger = (config: TLedgerConfig) => {
       newData,
       changedFields,
     });
+
+  /** Audit trace of an attempt, for the Rolled Back row. */
+  const trace = (
+    context: TAuditContext | undefined,
+    farmObjectId: Types.ObjectId,
+    entityId: Types.ObjectId | null,
+    action: TAuditAction,
+    event: string,
+  ) => ({ context, farmId: farmObjectId, entityType: config.entityType, entityId, action, module: AuditModules.FINANCE, event });
+
+  /** write() as a unit of work, with its audit row. */
+  const writeAudited = (
+    scope: TFinanceAccess,
+    row: TFinanceRow,
+    set: Record<string, unknown>,
+    memberId: Types.ObjectId,
+    attempt: ReturnType<typeof trace>,
+    log: () => Promise<unknown>,
+  ) =>
+    executeAtomically(
+      async (session, undo) => {
+        await write(scope, row, set, memberId, session);
+        const previous = Object.fromEntries([...Object.keys(set), "updatedBy"].map((key) => [key, row[key] ?? null]));
+        undo.push(() => rows.updateOne({ _id: row._id }, { $set: previous }));
+      },
+      { trace: attempt, log },
+    );
 
   /**
    * Optimistic write: refused when anybody touched the entry since it was read, so a
@@ -443,23 +471,24 @@ export const createLedger = (config: TLedgerConfig) => {
       description: appendTrail(row.description, config.settledStatus, paymentDate, `${paymentMethod}${remarks ? ` — ${remarks}` : ""}`),
       ...(party ? { [config.partyField]: party } : {}),
     };
-    await write(scope, row, set, memberId);
     const changedFields = ["status", "paymentMethod", config.partyField].filter((key) => key in set && set[key] !== row[key]);
-    await audit(
-      context,
-      scope.farmObjectId,
-      row._id,
-      AuditActions.UPDATE,
-      `${Label} ${config.settledStatus}`,
-      { status: row.status, paymentMethod: row.paymentMethod, [config.partyField]: row[config.partyField] ?? null },
-      {
-        status: config.settledStatus,
-        paymentMethod,
-        [config.partyField]: party ?? null,
-        paymentDate: dayKey(paymentDate),
-        ...(remarks ? { remarks } : {}),
-      },
-      changedFields,
+    await writeAudited(scope, row, set, memberId, trace(context, scope.farmObjectId, row._id, AuditActions.UPDATE, `${Label} ${config.settledStatus}`), () =>
+      audit(
+        context,
+        scope.farmObjectId,
+        row._id,
+        AuditActions.UPDATE,
+        `${Label} ${config.settledStatus}`,
+        { status: row.status, paymentMethod: row.paymentMethod, [config.partyField]: row[config.partyField] ?? null },
+        {
+          status: config.settledStatus,
+          paymentMethod,
+          [config.partyField]: party ?? null,
+          paymentDate: dayKey(paymentDate),
+          ...(remarks ? { remarks } : {}),
+        },
+        changedFields,
+      ),
     );
     return detailById(scope.farmObjectId, row._id);
   };
@@ -476,25 +505,18 @@ export const createLedger = (config: TLedgerConfig) => {
       requireRole(scope, FinancePermissions.CORRECT_SETTLED, `cancel a ${config.settledStatus} ${config.name}`);
     }
     const reason = requireReason(body.reason, `cancel this ${config.name}`);
-    await write(
-      scope,
-      row,
-      {
-        status: CANCELLED,
-        description: appendTrail(row.description, CANCELLED, new Date(), reason),
-      },
-      memberId,
-    );
     const review = await config.cancelReview(row);
-    await audit(
-      context,
-      scope.farmObjectId,
-      row._id,
-      AuditActions.REJECT,
-      `${Label} Cancelled`,
-      { status: row.status, amount: row.amount },
-      { status: CANCELLED, reason, ...(review ? { reviewRequired: true } : {}) },
-      ["status"],
+    await writeAudited(scope, row, { status: CANCELLED, description: appendTrail(row.description, CANCELLED, new Date(), reason) }, memberId, trace(context, scope.farmObjectId, row._id, AuditActions.REJECT, `${Label} Cancelled`), () =>
+      audit(
+        context,
+        scope.farmObjectId,
+        row._id,
+        AuditActions.REJECT,
+        `${Label} Cancelled`,
+        { status: row.status, amount: row.amount },
+        { status: CANCELLED, reason, ...(review ? { reviewRequired: true } : {}) },
+        ["status"],
+      ),
     );
     return { entry: await detailById(scope.farmObjectId, row._id), review };
   };
@@ -532,23 +554,24 @@ export const createLedger = (config: TLedgerConfig) => {
     if (row.status === CANCELLED) throw new AppError(status.CONFLICT, `A Cancelled ${config.name} can no longer be changed!`);
     if (!buffer?.length) throw new AppError(status.BAD_REQUEST, "Send one file in the `attachment` field!");
     const stored = await saveAttachment(scope.farmObjectId, buffer);
+    //the replaced file stays on disk: it is part of the financial evidence (spec 21 §111)
     try {
-      await write(scope, row, { attachment: stored }, memberId);
+      await writeAudited(scope, row, { attachment: stored }, memberId, trace(context, scope.farmObjectId, row._id, AuditActions.UPDATE, `${Label} Receipt`), () =>
+        audit(
+          context,
+          scope.farmObjectId,
+          row._id,
+          AuditActions.UPDATE,
+          `${Label} Receipt ${row.attachment ? "Replaced" : "Added"}`,
+          { attachment: row.attachment ? row.attachment.split("/").pop() : null },
+          { attachment: stored.split("/").pop() },
+          ["attachment"],
+        ),
+      );
     } catch (error) {
       await discardAttachment(stored);
       throw error;
     }
-    //the replaced file stays on disk: it is part of the financial evidence (spec 21 §111)
-    await audit(
-      context,
-      scope.farmObjectId,
-      row._id,
-      AuditActions.UPDATE,
-      `${Label} Receipt ${row.attachment ? "Replaced" : "Added"}`,
-      { attachment: row.attachment ? row.attachment.split("/").pop() : null },
-      { attachment: stored.split("/").pop() },
-      ["attachment"],
-    );
     return detailById(scope.farmObjectId, row._id);
   };
 
@@ -567,16 +590,18 @@ export const createLedger = (config: TLedgerConfig) => {
     if (row.status !== PENDING) {
       throw new AppError(status.CONFLICT, `The receipt of a ${row.status} ${config.name} is kept as evidence — replace it instead.`);
     }
-    await write(scope, row, { attachment: null }, memberId);
-    await audit(
-      context,
-      scope.farmObjectId,
-      row._id,
-      AuditActions.UPDATE,
-      `${Label} Receipt Removed`,
-      { attachment: row.attachment.split("/").pop() },
-      { attachment: null },
-      ["attachment"],
+    const attached = row.attachment.split("/").pop();
+    await writeAudited(scope, row, { attachment: null }, memberId, trace(context, scope.farmObjectId, row._id, AuditActions.UPDATE, `${Label} Receipt Removed`), () =>
+      audit(
+        context,
+        scope.farmObjectId,
+        row._id,
+        AuditActions.UPDATE,
+        `${Label} Receipt Removed`,
+        { attachment: attached },
+        { attachment: null },
+        ["attachment"],
+      ),
     );
     return detailById(scope.farmObjectId, row._id);
   };
@@ -586,7 +611,9 @@ export const createLedger = (config: TLedgerConfig) => {
     find,
     detailById,
     audit,
+    trace,
     write,
+    writeAudited,
     list,
     summary,
     summaryFor,

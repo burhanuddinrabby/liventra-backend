@@ -372,6 +372,15 @@ const audit = async (
   });
 };
 
+/** Audit trace of an attempt, for the Rolled Back row. */
+const traceOf = (
+  context: TAuditContext | undefined,
+  farmId: Types.ObjectId,
+  entityId: Types.ObjectId | null,
+  action: TAuditAction,
+  event: string,
+) => ({ context, farmId, entityType: AuditEntityTypes.INVENTORY_TRANSACTION, entityId, action, module: AuditModules.INVENTORY, event });
+
 /* -------------------------------------------------------------------------- */
 /*                     Derived status / derived fields (DB)                   */
 /* -------------------------------------------------------------------------- */
@@ -667,29 +676,32 @@ const createInventoryItem = async (
     }
 
     return { item: item.toObject() as TInventoryDoc, openingTransaction };
-  });
-
-  await audit(
-    context,
-    access.farmObjectId,
-    created.item._id,
-    AuditEntityTypes.INVENTORY,
-    AuditActions.CREATE,
-    "Inventory Item Registered",
-    null,
-    {
-      inventoryCode: created.item.inventoryCode,
-      itemName,
-      itemType,
-      unit,
-      currentStock,
-      minimumStock,
-      reorderLevel,
-      maximumStock,
-      status: initialStatus,
-      openingTransactionNo: created.openingTransaction?.transactionNo ?? null,
+  }, {
+    trace: traceOf(context, access.farmObjectId, null, AuditActions.CREATE, "Inventory Item Registered"),
+    log: async (created) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        created.item._id,
+        AuditEntityTypes.INVENTORY,
+        AuditActions.CREATE,
+        "Inventory Item Registered",
+        null,
+        {
+          inventoryCode: created.item.inventoryCode,
+          itemName,
+          itemType,
+          unit,
+          currentStock,
+          minimumStock,
+          reorderLevel,
+          maximumStock,
+          status: initialStatus,
+          openingTransactionNo: created.openingTransaction?.transactionNo ?? null,
+        },
+      );
     },
-  );
+  });
 
   return {
     item: withDerived(created.item),
@@ -2196,30 +2208,33 @@ const createTransaction = async (
       applied,
       nextStatus,
     };
-  });
-
-  await audit(
-    context,
-    access.farmObjectId,
-    result.transaction._id,
-    AuditEntityTypes.INVENTORY_TRANSACTION,
-    AuditActions.CREATE,
-    `Stock ${movement.direction === StockDirections.IN ? "Increased" : "Decreased"} — ${transactionType}`,
-    { currentStock: result.stockBefore, status: statusBefore },
-    {
-      transactionNo: result.transaction.transactionNo,
-      inventoryCode: item.inventoryCode,
-      transactionType,
-      direction: movement.direction,
-      quantity: result.applied,
-      unit: item.unit,
-      ...(unitPrice !== null ? { unitPrice, totalAmount } : {}),
-      currentStock: result.stockAfter,
-      status: result.nextStatus,
-      ...(remarks ? { remarks } : {}),
+  }, {
+    trace: traceOf(context, access.farmObjectId, null, AuditActions.CREATE, `Stock Movement — ${transactionType}`),
+    log: async (result) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        result.transaction._id,
+        AuditEntityTypes.INVENTORY_TRANSACTION,
+        AuditActions.CREATE,
+        `Stock ${movement.direction === StockDirections.IN ? "Increased" : "Decreased"} — ${transactionType}`,
+        { currentStock: result.stockBefore, status: statusBefore },
+        {
+          transactionNo: result.transaction.transactionNo,
+          inventoryCode: item.inventoryCode,
+          transactionType,
+          direction: movement.direction,
+          quantity: result.applied,
+          unit: item.unit,
+          ...(unitPrice !== null ? { unitPrice, totalAmount } : {}),
+          currentStock: result.stockAfter,
+          status: result.nextStatus,
+          ...(remarks ? { remarks } : {}),
+        },
+        ["currentStock", "status"],
+      );
     },
-    ["currentStock", "status"],
-  );
+  });
 
   const alert = stockAlertFor(statusBefore, result.nextStatus, {
     itemName: item.itemName,
@@ -2728,34 +2743,37 @@ const reverseTransaction = async (
     }
 
     return { transaction: trx.toObject() as TInventoryTransactionDoc, change, nextStatus };
+  }, {
+    trace: traceOf(context, access.farmObjectId, original._id, AuditActions.UPDATE, "Stock Transaction Reversed"),
+    log: async (result) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        result.transaction._id,
+        AuditEntityTypes.INVENTORY_TRANSACTION,
+        AuditActions.UPDATE,
+        "Stock Transaction Reversed",
+        {
+          transactionNo: original.transactionNo,
+          transactionType: original.transactionType,
+          direction: originalDirection,
+          quantity: original.quantity,
+          currentStock: result.change.before,
+          status: statusBefore,
+        },
+        {
+          transactionNo: result.transaction.transactionNo,
+          transactionType: reversalType,
+          direction,
+          quantity,
+          currentStock: result.change.after,
+          status: result.nextStatus,
+          reason,
+        },
+        ["currentStock", "status"],
+      );
+    },
   });
-
-  await audit(
-    context,
-    access.farmObjectId,
-    result.transaction._id,
-    AuditEntityTypes.INVENTORY_TRANSACTION,
-    AuditActions.UPDATE,
-    "Stock Transaction Reversed",
-    {
-      transactionNo: original.transactionNo,
-      transactionType: original.transactionType,
-      direction: originalDirection,
-      quantity: original.quantity,
-      currentStock: result.change.before,
-      status: statusBefore,
-    },
-    {
-      transactionNo: result.transaction.transactionNo,
-      transactionType: reversalType,
-      direction,
-      quantity,
-      currentStock: result.change.after,
-      status: result.nextStatus,
-      reason,
-    },
-    ["currentStock", "status"],
-  );
 
   return {
     reversal: { ...result.transaction, delta, direction },

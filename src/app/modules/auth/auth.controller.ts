@@ -3,11 +3,12 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import status from "http-status";
 import { UserServices } from "./auth.services.js";
+import { auditContextFromRequest } from "../auditLog/auditLog.utils.js";
 import config from "../../config/index.js";
 
 const createUser = catchAsync(async (req: Request, res: Response) => {
     const { body } = req;
-    const user = await UserServices.createUserIntoDB(req?.file, body);
+    const user = await UserServices.createUserIntoDB(req?.file, body, auditContextFromRequest(req));
     sendResponse(res, {
         statusCode: status.OK,
         success: true,
@@ -19,7 +20,7 @@ const createUser = catchAsync(async (req: Request, res: Response) => {
 const loginUser = catchAsync(async (req: Request, res: Response) => {
     //loginMethod can be email or phone (direct value from request body)
     const { email, password } = req.body;
-    const { accessToken, refreshToken, emailVerified, phoneVerified } = await UserServices.loginUser(email, password);
+    const { accessToken, refreshToken, emailVerified, phoneVerified } = await UserServices.loginUser(email, password, auditContextFromRequest(req));
 
     res.cookie('refreshToken', refreshToken, {
         secure: config.node_env === 'production',
@@ -41,6 +42,17 @@ const loginUser = catchAsync(async (req: Request, res: Response) => {
     });
 });
 
+const logoutUser = catchAsync(async (req: Request, res: Response) => {
+    await UserServices.logoutUser(req.user.userId, auditContextFromRequest(req));
+    res.clearCookie('refreshToken', { secure: config.node_env === 'production', httpOnly: true });
+
+    sendResponse(res, {
+        statusCode: status.OK,
+        success: true,
+        message: "User logged out successfully!!"
+    });
+});
+
 const forgotPassword = catchAsync(async (req: Request, res: Response) => {
     await UserServices.forgotPassword(req.body.email);
 
@@ -52,7 +64,7 @@ const forgotPassword = catchAsync(async (req: Request, res: Response) => {
 });
 
 const resetPassword = catchAsync(async (req: Request, res: Response) => {
-    await UserServices.resetPassword(req.body);
+    await UserServices.resetPassword(req.body, auditContextFromRequest(req));
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -72,7 +84,7 @@ const getProfile = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateProfile = catchAsync(async (req: Request, res: Response) => {
-    const user = await UserServices.updateProfile(req.user.userId, req.body);
+    const user = await UserServices.updateProfile(req.user.userId, req.body, auditContextFromRequest(req));
     
     sendResponse(res, {
         statusCode: status.OK,
@@ -83,7 +95,7 @@ const updateProfile = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateProfilePicture = catchAsync(async (req: Request, res: Response) => {
-    const user = await UserServices.updateProfilePicture(req.user.userId, req?.file, req?.body?.url);
+    const user = await UserServices.updateProfilePicture(req.user.userId, req?.file, req?.body?.url, auditContextFromRequest(req));
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -94,7 +106,7 @@ const updateProfilePicture = catchAsync(async (req: Request, res: Response) => {
 });
 
 const changePassword = catchAsync(async (req: Request, res: Response) => {
-    await UserServices.changePassword(req.user.userId, req.body);
+    await UserServices.changePassword(req.user.userId, req.body, auditContextFromRequest(req));
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -104,7 +116,7 @@ const changePassword = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateSystemRole = catchAsync(async (req: Request, res: Response) => {
-    const user = await UserServices.updateSystemRole(req.params.id as string, req.body.systemRole);
+    const user = await UserServices.updateSystemRole(req.params.id as string, req.body.systemRole, auditContextFromRequest(req));
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -115,7 +127,7 @@ const updateSystemRole = catchAsync(async (req: Request, res: Response) => {
 });
 
 const toggleActive = catchAsync(async (req: Request, res: Response) => {
-    const user = await UserServices.toggleActive(req.params.id as string);
+    const user = await UserServices.toggleActive(req.params.id as string, auditContextFromRequest(req));
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -126,7 +138,7 @@ const toggleActive = catchAsync(async (req: Request, res: Response) => {
 });
 
 const deleteUser = catchAsync(async (req: Request, res: Response) => {
-    const user = await UserServices.deleteUser(req.params.id as string);
+    const user = await UserServices.deleteUser(req.params.id as string, auditContextFromRequest(req));
 
     sendResponse(res, {
         statusCode: status.OK,
@@ -173,6 +185,7 @@ const verifyEmail = catchAsync(async (req: Request, res: Response) => {
 export const UserController = {
     createUser,
     loginUser,
+    logoutUser,
     forgotPassword,
     resetPassword,
     getProfile,

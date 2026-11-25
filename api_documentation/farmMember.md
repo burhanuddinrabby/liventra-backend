@@ -226,6 +226,10 @@ traceable. The Owner membership can never be removed.
 Farm creation automatically creates the owner's active `Owner` membership. A startup backfill also
 adds the missing row for farms created before this module existed.
 
+## Audit
+
+Add, role change, salary change, update, enable / disable and remove are recorded in the same transaction as the change. `salary` and `nid` appear only as `[hidden]`. See `auditLog.md`; history of one record: `GET /farms/:farmId/audit-logs/entity/FarmMember/:id`.
+
 ## Error statuses
 
 | Status | Meaning |

@@ -742,6 +742,15 @@ const audit = (
     changedFields,
   });
 
+/** Audit trace of an attempt, for the Rolled Back row. */
+const traceOf = (
+  context: TAuditContext | undefined,
+  farmId: Types.ObjectId,
+  entityId: Types.ObjectId | null,
+  action: TAuditAction,
+  event: string,
+) => ({ context, farmId, entityType: AuditEntityTypes.VACCINATION, entityId, action, module: AuditModules.HEALTH, event });
+
 const throwIfBlocked = (blockers: string[]) => {
   if (blockers.length) {
     throw new AppError(status.UNPROCESSABLE_ENTITY, `Vaccination cannot be completed: ${blockers.join(" ")}`);
@@ -936,6 +945,7 @@ const createVaccination = async (
     createdBy: memberId,
   };
 
+  const completed = draft.status === VaccinationStatuses.COMPLETED;
   const { record, movement } = await executeAtomically(async (session, undo) => {
     const [doc] = await VaccinationModel.create([data], sessionOpts(session));
     if (!doc) throw new AppError(status.INTERNAL_SERVER_ERROR, "Failed to save the vaccination!");
@@ -949,18 +959,20 @@ const createVaccination = async (
         })
       : null;
     return { record: doc, movement: moved };
+  }, {
+    trace: traceOf(context, access.farmObjectId, null, AuditActions.CREATE, "Vaccination"),
+    log: async ({ record, movement }) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        record._id,
+        AuditActions.CREATE,
+        completed ? "Vaccination Completed" : "Vaccination Scheduled",
+        null,
+        { ...auditSnapshot(data), inventory: movement },
+      );
+    },
   });
-
-  const completed = draft.status === VaccinationStatuses.COMPLETED;
-  await audit(
-    context,
-    access.farmObjectId,
-    record._id,
-    AuditActions.CREATE,
-    completed ? "Vaccination Completed" : "Vaccination Scheduled",
-    null,
-    { ...auditSnapshot(data), inventory: movement },
-  );
 
   return {
     vaccination: await loadDetail(access, record._id),
@@ -1060,18 +1072,21 @@ const completeVaccination = async (
       memberId,
       remarks: `${doc.vaccinationNo} — ${vaccine.vaccineName} for ${animal.animalCode}`,
     });
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, "Vaccination Completed"),
+    log: async (movement) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        doc._id,
+        AuditActions.UPDATE,
+        "Vaccination Completed",
+        auditSnapshot(doc),
+        { ...auditSnapshot({ ...doc, ...update }), inventory: movement },
+        ["status", "vaccinationDate", "administeredBy", "batchNumber", "nextDueDate", ...(remarks ? ["remarks"] : [])],
+      );
+    },
   });
-
-  await audit(
-    context,
-    access.farmObjectId,
-    doc._id,
-    AuditActions.UPDATE,
-    "Vaccination Completed",
-    auditSnapshot(doc),
-    { ...auditSnapshot({ ...doc, ...update }), inventory: movement },
-    ["status", "vaccinationDate", "administeredBy", "batchNumber", "nextDueDate", ...(remarks ? ["remarks"] : [])],
-  );
 
   return {
     vaccination: await loadDetail(access, doc._id),
@@ -1191,25 +1206,27 @@ const changeStatus = async (
       }
     }
     return { created: next, movements: moved };
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, `Vaccination ${target}`),
+    log: async ({ created, movements }) => {
+      const event = reversing ? "Vaccination Reversed" : target === VaccinationStatuses.MISSED ? "Vaccination Missed" : "Vaccination Cancelled";
+      await audit(
+        context,
+        access.farmObjectId,
+        doc._id,
+        AuditActions.UPDATE,
+        event,
+        auditSnapshot(doc),
+        { ...auditSnapshot({ ...doc, status: target as TVaccinationStatus, remarks }), inventory: movements },
+        ["status", "remarks", ...(reversing ? ["nextDueDate"] : [])],
+      );
+      if (!created || !followUp) return;
+      await audit(context, access.farmObjectId, created._id, AuditActions.CREATE, "Vaccination Scheduled", null, {
+        ...auditSnapshot(followUp),
+        rescheduledFrom: doc.vaccinationNo,
+      });
+    },
   });
-
-  const event = reversing ? "Vaccination Reversed" : target === VaccinationStatuses.MISSED ? "Vaccination Missed" : "Vaccination Cancelled";
-  await audit(
-    context,
-    access.farmObjectId,
-    doc._id,
-    AuditActions.UPDATE,
-    event,
-    auditSnapshot(doc),
-    { ...auditSnapshot({ ...doc, status: target as TVaccinationStatus, remarks }), inventory: movements },
-    ["status", "remarks", ...(reversing ? ["nextDueDate"] : [])],
-  );
-  if (created && followUp) {
-    await audit(context, access.farmObjectId, created._id, AuditActions.CREATE, "Vaccination Scheduled", null, {
-      ...auditSnapshot(followUp),
-      rescheduledFrom: doc.vaccinationNo,
-    });
-  }
 
   return {
     vaccination: await loadDetail(access, doc._id),
@@ -1385,31 +1402,34 @@ const updateVaccination = async (
       if (used) moved.push(used);
     }
     return moved;
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, "Vaccination Updated"),
+    log: async (movements) => {
+      const oldData: Record<string, unknown> = {};
+      const newData: Record<string, unknown> = {};
+      for (const key of changedFields) {
+        oldData[key] = (doc as unknown as Record<string, unknown>)[key] ?? null;
+        newData[key] = set[key];
+      }
+      if (reason) newData.reason = reason;
+      if (movements.length) newData.inventory = movements;
+      let event = "Vaccination Updated";
+      if (changedFields.length === 1) {
+        event =
+          {
+            batchNumber: "Batch Changed",
+            administeredBy: "Administrator Changed",
+            vaccinationDate: "Vaccination Date Changed",
+            nextDueDate: "Next Due Date Changed",
+            vaccineId: "Vaccine Changed",
+          }[changedFields[0] as string] ?? event;
+      }
+      await audit(context, access.farmObjectId, doc._id, AuditActions.UPDATE, event, oldData, newData, [
+        ...changedFields,
+        ...(movements.length ? ["inventory"] : []),
+      ]);
+    },
   });
-
-  const oldData: Record<string, unknown> = {};
-  const newData: Record<string, unknown> = {};
-  for (const key of changedFields) {
-    oldData[key] = (doc as unknown as Record<string, unknown>)[key] ?? null;
-    newData[key] = set[key];
-  }
-  if (reason) newData.reason = reason;
-  if (movements.length) newData.inventory = movements;
-  let event = "Vaccination Updated";
-  if (changedFields.length === 1) {
-    event =
-      {
-        batchNumber: "Batch Changed",
-        administeredBy: "Administrator Changed",
-        vaccinationDate: "Vaccination Date Changed",
-        nextDueDate: "Next Due Date Changed",
-        vaccineId: "Vaccine Changed",
-      }[changedFields[0] as string] ?? event;
-  }
-  await audit(context, access.farmObjectId, doc._id, AuditActions.UPDATE, event, oldData, newData, [
-    ...changedFields,
-    ...(movements.length ? ["inventory"] : []),
-  ]);
 
   return { mode: "corrected" as const, vaccination: await loadDetail(access, doc._id), stockMovements: movements, warnings };
 };
@@ -1438,9 +1458,16 @@ const deleteVaccination = async (farmId: string, id: string, requesterUserId: st
     throw new AppError(status.CONFLICT, "This record has stock movements (a reversed dose) and is kept for traceability.");
   }
 
-  const removed = await VaccinationModel.deleteOne({ _id: doc._id, status: doc.status });
-  if (!removed.deletedCount) throw new AppError(status.CONFLICT, "This vaccination was changed by someone else. Reload and try again.");
-  await audit(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Vaccination Deleted", auditSnapshot(doc), null);
+  await executeAtomically(async (session, undo) => {
+    const removed = await VaccinationModel.deleteOne({ _id: doc._id, status: doc.status }, sessionOpts(session));
+    if (!removed.deletedCount) throw new AppError(status.CONFLICT, "This vaccination was changed by someone else. Reload and try again.");
+    undo.push(() => VaccinationModel.create([doc]));
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Vaccination Deleted"),
+    log: async () => {
+      await audit(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Vaccination Deleted", auditSnapshot(doc), null);
+    },
+  });
   return { _id: doc._id, vaccinationNo: doc.vaccinationNo, deleted: true };
 };
 

@@ -769,9 +769,13 @@ Reactivate through `PATCH /lifecycle` with `{ "lifeStatus": "Active" }`.
 
 ---
 
+## Audit
+
+Register, profile, identification, location, status, media, lifecycle and archive are recorded. History (Owner / Manager):
+`GET /farms/:farmId/audit-logs/entity/Animal/:id` (`auditLog.md`).
+
 ## Not implemented yet (depends on later models)
 
-- **AuditLog** (Model 24) — no `oldData/newData/changedFields` entries are written yet; `TODO(AuditLog)` markers sit in the service.
 - **WeightRecord** (Model 11) — registration does not create the initial weight record yet; `currentWeight` is only settable at registration.
 - **DeviceAssignment** (Model 26) — lifecycle exits do not close IoT assignments yet.
 - **Income** (Model 22) — selling does not create an income record.

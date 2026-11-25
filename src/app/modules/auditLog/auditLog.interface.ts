@@ -31,6 +31,10 @@ export type TAuditLog = {
   ipAddress?: string;
   userAgent?: string;
   deviceType?: TAuditDeviceType;
+  browser?: string;
+  operatingSystem?: string;
+  //stays empty for now (privacy)
+  location?: { country?: string; city?: string; latitude?: number; longitude?: number };
   requestId?: string;
   status: TAuditStatus;
   createdAt?: Date;

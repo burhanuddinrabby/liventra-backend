@@ -28,12 +28,29 @@ import { ExpenseModel } from "../expense/expense.model.js";
 import { IncomeModel } from "../income/income.model.js";
 import { removeFarmAttachments } from "../finance/finance.utils.js";
 import { closeFarmRooms, removeUserFromFarm } from "../../realtime/realtime.js";
-import { recordAuditLog, type TAuditContext } from "../auditLog/auditLog.utils.js";
+import { recordAuditLog, recordRolledBack, type TAuditContext, type TRecordAuditInput } from "../auditLog/auditLog.utils.js";
+import { diffForAudit } from "../auditLog/auditLog.sanitize.js";
 import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 
 type TFarmPayload = Omit<TFarm, "farmId" | "ownerId" | "status"> & {
   establishedDate?: string | Date;
 };
+
+const farmEvent = (
+  context: TAuditContext | undefined,
+  farmObjectId: Types.ObjectId,
+  event: string,
+  more: Partial<TRecordAuditInput> = {},
+): TRecordAuditInput => ({
+  context,
+  farmId: farmObjectId,
+  entityType: AuditEntityTypes.FARM,
+  entityId: farmObjectId,
+  action: AuditActions.UPDATE,
+  module: AuditModules.FARM,
+  event,
+  ...more,
+});
 
 const getFarmFilter = (farmId: string, ownerId?: string) => {
   //example: farmId = "FARM-00001" or "64b8f8c8e4b0f1a2b3c4d5e6"
@@ -45,7 +62,7 @@ const getFarmFilter = (farmId: string, ownerId?: string) => {
   //example: { ownerId: "123", $or: [{ _id: "123" }, { farmId: "FARM-00001" }] }
 };
 
-const createFarm = async (ownerId: string, file: any, payload: TFarmPayload): Promise<TFarm> => {
+const createFarm = async (ownerId: string, file: any, payload: TFarmPayload, context?: TAuditContext): Promise<TFarm> => {
   const owner = await UserModel.findOne({ userId: ownerId, isActive: true, isDeleted: false, }).select("userId emailVerified phoneVerified");
   if (!owner) {
     throw new AppError(status.FORBIDDEN, "Only an active user can create a farm!",);
@@ -100,6 +117,10 @@ const createFarm = async (ownerId: string, file: any, payload: TFarmPayload): Pr
     throw error;
   }
 
+  await recordAuditLog(farmEvent(context, result._id, "Farm Created", {
+    action: AuditActions.CREATE,
+    newData: { farmId, farmName: result.farmName, farmType: result.farmType, status: result.status },
+  }));
   return result;
 };
 
@@ -234,6 +255,7 @@ const updateFarm = async (
   farmId: string,
   requesterUserId: string,
   payload: Record<string, unknown>,
+  context?: TAuditContext,
 ): Promise<TFarm> => {
   const farm = await getFarmForMember(farmId, requesterUserId, FARM_MANAGEMENT_ROLES);
 
@@ -274,6 +296,10 @@ const updateFarm = async (
     throw new AppError(status.NOT_FOUND, "Farm not found!");
   }
 
+  const touched = (source: object) => Object.fromEntries(Object.entries(source).filter(([key]) => key in updates));
+  const changes = diffForAudit(touched(farm.toObject()), touched(updated.toObject()));
+  if (changes.changedFields.length) await recordAuditLog(farmEvent(context, farm._id, "Farm Updated", changes));
+
   await updated.populate("ownerId", "userId fullName email phone profilePicture");
   return updated;
 };
@@ -283,6 +309,7 @@ const updateFarmLogo = async (
   requesterUserId: string,
   file?: Express.Multer.File,
   logoUrl?: string,
+  context?: TAuditContext,
 ): Promise<TFarm> => {
   const farm = await getFarmForMember(farmId, requesterUserId, FARM_MANAGEMENT_ROLES);
 
@@ -312,6 +339,12 @@ const updateFarmLogo = async (
     throw new AppError(status.NOT_FOUND, "Farm not found!");
   }
 
+  await recordAuditLog(farmEvent(context, farm._id, "Farm Logo Updated", {
+    oldData: { logo: farm.logo ?? null },
+    newData: { logo },
+    changedFields: ["logo"],
+  }));
+
   await updated.populate("ownerId", "userId fullName email phone profilePicture");
   return updated;
 };
@@ -335,7 +368,7 @@ const getAllFarms = async (query: Record<string, unknown>) => {
   return { meta, farms };
 };
 
-const updateFarmStatus = async (farmId: string, statusValue: TFarmStatus,): Promise<TFarm> => {
+const updateFarmStatus = async (farmId: string, statusValue: TFarmStatus, context?: TAuditContext): Promise<TFarm> => {
   const farm = await FarmModel.findOne(getFarmFilter(farmId));
   if (!farm) {
     throw new AppError(status.NOT_FOUND, "Farm not found!");
@@ -350,11 +383,19 @@ const updateFarmStatus = async (farmId: string, statusValue: TFarmStatus,): Prom
     throw new AppError(status.NOT_FOUND, "Farm not found!");
   }
 
+  if (farm.status !== statusValue) {
+    await recordAuditLog(farmEvent(context, farm._id, "Farm Status Changed", {
+      oldData: { status: farm.status },
+      newData: { status: statusValue },
+      changedFields: ["status"],
+    }));
+  }
+
   await updated.populate("ownerId", "userId fullName email phone");
   return updated;
 };
 
-const transferFarmOwnership = async (farmId: string, requesterUserId: string, newOwnerIdentifier: string): Promise<TFarm> => {
+const transferFarmOwnership = async (farmId: string, requesterUserId: string, newOwnerIdentifier: string, context?: TAuditContext): Promise<TFarm> => {
   const requester = await UserModel.findOne({ userId: requesterUserId, isActive: true, isDeleted: false }).select("_id systemRole");
   if (!requester) {
     throw new AppError(status.FORBIDDEN, "Only an active user can transfer farm ownership!",);
@@ -409,6 +450,11 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
     .select("role isActive")
     .lean();
 
+  const transfer = farmEvent(context, farm._id, "Farm Ownership Transferred", {
+    oldData: { ownerId: farm.ownerId },
+    newData: { ownerId: newOwner._id },
+    changedFields: ["ownerId"],
+  });
   let updated;
   try {
     //1. new owner becomes the ACTIVE Owner member (created if they never joined the farm)
@@ -432,8 +478,15 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
     if (!updated) {
       throw new AppError(status.NOT_FOUND, "Farm not found!");
     }
+    //4. no transfer without its audit row
+    await recordAuditLog({ ...transfer, session: null });
   } catch (error) {
-    //best-effort compensation: restore both membership roles as they were before step 1
+    //best-effort compensation: restore owner and both membership roles as they were before step 1
+    await FarmModel.updateOne(
+      { _id: farm._id },
+      { $set: { ownerId: farm.ownerId } },
+      { overwriteImmutable: true },
+    ).catch(() => undefined);
     if (previousOwnerMembership) {
       await FarmMemberModel.updateOne(
         { _id: previousOwnerMembership._id },
@@ -463,6 +516,7 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
         role: FarmMemberRoles.OWNER,
       }).catch(() => undefined);
     }
+    await recordRolledBack(transfer);
     throw error;
   }
 

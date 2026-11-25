@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import status from "http-status";
 import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
+import { auditContextFromRequest } from "../auditLog/auditLog.utils.js";
 import { AnimalServices } from "./animal.services.js";
 
 //farm-level authorization happens in the service; the controller only maps HTTP <-> service
@@ -16,6 +17,7 @@ const createAnimal = catchAsync(async (req: Request, res: Response) => {
     requesterOf(req),
     bodyOf(req),
     req.file,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.CREATED,
@@ -92,7 +94,7 @@ type TAnimalUpdateService = typeof AnimalServices.updateAnimal;
 
 const makeUpdateHandler = (service: TAnimalUpdateService, message: string) =>
   catchAsync(async (req: Request, res: Response) => {
-    const animal = await service(farmIdOf(req), requesterOf(req), animalIdOf(req), bodyOf(req));
+    const animal = await service(farmIdOf(req), requesterOf(req), animalIdOf(req), bodyOf(req), auditContextFromRequest(req));
     sendResponse(res, { statusCode: status.OK, success: true, message, data: animal });
   });
 
@@ -127,6 +129,7 @@ const updateMedia = catchAsync(async (req: Request, res: Response) => {
       profilePhoto?: Express.Multer.File[];
       gallery?: Express.Multer.File[];
     },
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,
@@ -141,6 +144,7 @@ const archiveAnimal = catchAsync(async (req: Request, res: Response) => {
     farmIdOf(req),
     requesterOf(req),
     animalIdOf(req),
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,

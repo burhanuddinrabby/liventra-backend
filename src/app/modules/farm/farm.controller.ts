@@ -7,7 +7,7 @@ import { FarmServices } from "./farm.services.js";
 import { auditContextFromRequest } from "../auditLog/auditLog.utils.js";
 
 const createFarm = catchAsync(async (req: Request, res: Response) => {
-  const farm = await FarmServices.createFarm(req.user.userId, req?.file, req.body);
+  const farm = await FarmServices.createFarm(req.user.userId, req?.file, req.body, auditContextFromRequest(req));
   sendResponse(res, {
     statusCode: status.CREATED,
     success: true,
@@ -48,6 +48,7 @@ const updateFarm = catchAsync(async (req: Request, res: Response) => {
     req.params.farmId as string,
     req.user.userId,
     req.body as Record<string, unknown>,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,
@@ -76,6 +77,7 @@ const updateFarmLogo = catchAsync(async (req: Request, res: Response) => {
     req.user.userId,
     req.file,
     req.body?.logo as string | undefined,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,
@@ -89,6 +91,7 @@ const updateFarmStatus = catchAsync(async (req: Request, res: Response) => {
   const farm = await FarmServices.updateFarmStatus(
     req.params.farmId as string,
     req.body.status as TFarmStatus,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,
@@ -136,6 +139,7 @@ const transferFarmOwnership = catchAsync(async (req: Request, res: Response) => 
     req.params.farmId as string,
     req.user.userId,
     req.body.newOwnerId as string,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,

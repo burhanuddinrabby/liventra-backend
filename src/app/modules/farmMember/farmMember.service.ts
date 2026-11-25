@@ -15,6 +15,12 @@ import {
   isAssignableFarmMemberRole,
   isFarmOwner,
 } from "./farmMember.utils.js";
+import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
+import type { TAuditAction } from "../auditLog/auditLog.interface.js";
+import { diffForAudit } from "../auditLog/auditLog.sanitize.js";
+import { recordAuditLog } from "../auditLog/auditLog.utils.js";
+import type { TAuditContext, TRecordAuditInput } from "../auditLog/auditLog.utils.js";
+import { executeAtomically } from "../feedRecord/feedRecord.utils.js";
 import { removeUserFromFarm } from "../../realtime/realtime.js";
 import type { TFarmMember, TFarmMemberRole } from "./farmMember.interface.js";
 
@@ -46,6 +52,25 @@ type TUpdateMemberPayload = {
   joiningDate?: string | Date | null;
   salary?: number | string | null;
 };
+
+//salary and nid stay in the snapshot: the audit layer hides the values, not the change
+const memberEvent = (
+  context: TAuditContext | undefined,
+  farmObjectId: Types.ObjectId,
+  memberId: Types.ObjectId | null,
+  action: TAuditAction,
+  event: string,
+  more: Partial<TRecordAuditInput> = {},
+): TRecordAuditInput => ({
+  context,
+  farmId: farmObjectId,
+  entityType: AuditEntityTypes.FARM_MEMBER,
+  entityId: memberId,
+  action,
+  module: AuditModules.FARM,
+  event,
+  ...more,
+});
 
 //a farm can be addressed by its public id (FARM-00001) or its ObjectId
 const getFarmFilter = (farmId: string) => {
@@ -309,6 +334,7 @@ const createMember = async (
   farmId: string,
   requesterUserId: string,
   payload: TCreateMemberPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveFarmAccess(farmId, requesterUserId);
   const actorRole = requireMemberManager(access);
@@ -389,7 +415,15 @@ const createMember = async (
     memberData.salary = parseSalary(payload.salary);
   }
 
-  const created = await FarmMemberModel.create(memberData);
+  const added = memberEvent(context, access.farm._id, null, AuditActions.CREATE, "Member Added", {
+    newData: { ...memberData, fullName: targetUser.fullName },
+  });
+  const created = await executeAtomically(async (session, undo) => {
+    const [row] = await FarmMemberModel.create([memberData], session ? { session } : {});
+    if (!row) throw new AppError(status.INTERNAL_SERVER_ERROR, "Farm member could not be added!");
+    undo.push(() => FarmMemberModel.deleteOne({ _id: row._id }));
+    return row;
+  }, { trace: added, log: (row) => recordAuditLog({ ...added, entityId: row._id }) });
 
   return FarmMemberModel.findById(created._id)
     .select("+nid +salary")
@@ -524,6 +558,7 @@ const updateMember = async (
   requesterUserId: string,
   memberId: string,
   payload: TUpdateMemberPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveFarmAccess(farmId, requesterUserId);
   const actorRole = requireMemberManager(access);
@@ -604,13 +639,37 @@ const updateMember = async (
   if (Object.keys(updates).length > 0) updateDocument.$set = updates;
   if (Object.keys(unset).length > 0) updateDocument.$unset = unset;
 
-  const updated = await FarmMemberModel.findOneAndUpdate(
-    { _id: member._id, farmId: access.farm._id },
-    updateDocument,
-    { returnDocument: 'after', runValidators: true },
-  )
+  const before = (await FarmMemberModel.findById(member._id)
     .select("+nid +salary")
-    .populate("userId", USER_POPULATE_FIELDS);
+    .lean()) as unknown as Record<string, unknown> | null;
+  if (!before) throw new AppError(status.NOT_FOUND, "Farm member not found!");
+  const fields = [...Object.keys(updates), ...Object.keys(unset)];
+  const changes = diffForAudit(
+    Object.fromEntries(fields.map((field) => [field, before[field] ?? null])),
+    Object.fromEntries(fields.map((field) => [field, updates[field] ?? null])),
+  );
+  let event = "Member Updated";
+  if (changes.changedFields.includes("role")) event = "Member Role Changed";
+  else if (changes.changedFields.includes("salary")) event = "Member Salary Changed";
+  const entry = memberEvent(context, access.farm._id, member._id, AuditActions.UPDATE, event, changes);
+
+  const updated = await executeAtomically(async (session, undo) => {
+    const row = await FarmMemberModel.findOneAndUpdate(
+      { _id: member._id, farmId: access.farm._id },
+      updateDocument,
+      { returnDocument: 'after', runValidators: true, ...(session ? { session } : {}) },
+    )
+      .select("+nid +salary")
+      .populate("userId", USER_POPULATE_FIELDS);
+    if (!row) throw new AppError(status.NOT_FOUND, "Farm member not found!");
+    undo.push(() => FarmMemberModel.replaceOne({ _id: member._id }, before));
+    return row;
+  }, {
+    trace: entry,
+    log: async () => {
+      if (changes.changedFields.length) await recordAuditLog(entry);
+    },
+  });
   //live access was granted with the old membership
   if (updates.role) removeUserFromFarm(member.userId._id, access.farm._id);
   return updated;
@@ -624,6 +683,7 @@ const toggleMemberActive = async (
   farmId: string,
   requesterUserId: string,
   memberId: string,
+  context?: TAuditContext,
 ) => {
   const access = await resolveFarmAccess(farmId, requesterUserId);
   const actorRole = requireMemberManager(access);
@@ -675,13 +735,26 @@ const toggleMemberActive = async (
     }
   }
 
-  const updated = await FarmMemberModel.findOneAndUpdate(
-    { _id: member._id, farmId: access.farm._id },
-    { $set: { isActive: nextActive } },
-    { returnDocument: 'after', runValidators: true },
-  )
-    .select("+nid +salary")
-    .populate("userId", USER_POPULATE_FIELDS);
+  const entry = memberEvent(
+    context,
+    access.farm._id,
+    member._id,
+    AuditActions.UPDATE,
+    nextActive ? "Member Enabled" : "Member Disabled",
+    { oldData: { isActive: member.isActive }, newData: { isActive: nextActive }, changedFields: ["isActive"] },
+  );
+  const updated = await executeAtomically(async (session, undo) => {
+    const row = await FarmMemberModel.findOneAndUpdate(
+      { _id: member._id, farmId: access.farm._id },
+      { $set: { isActive: nextActive } },
+      { returnDocument: 'after', runValidators: true, ...(session ? { session } : {}) },
+    )
+      .select("+nid +salary")
+      .populate("userId", USER_POPULATE_FIELDS);
+    if (!row) throw new AppError(status.NOT_FOUND, "Farm member not found!");
+    undo.push(() => FarmMemberModel.updateOne({ _id: member._id }, { $set: { isActive: member.isActive } }));
+    return row;
+  }, { trace: entry, log: () => recordAuditLog(entry) });
   //live access was granted with the old membership
   if (!nextActive) removeUserFromFarm(member.userId._id, access.farm._id);
   return updated;
@@ -699,6 +772,7 @@ const deleteMember = async (
   farmId: string,
   requesterUserId: string,
   memberId: string,
+  context?: TAuditContext,
 ) => {
   const access = await resolveFarmAccess(farmId, requesterUserId);
   requireFarmOwner(access);
@@ -714,13 +788,19 @@ const deleteMember = async (
     );
   }
 
-  const removed = await FarmMemberModel.findOneAndDelete({
-    _id: member._id,
-    farmId: access.farm._id,
+  const before = await FarmMemberModel.findById(member._id).select("+nid +salary").lean();
+  const entry = memberEvent(context, access.farm._id, member._id, AuditActions.DELETE, "Member Removed", {
+    oldData: before as unknown as Record<string, unknown> | null,
   });
-  if (!removed) {
-    throw new AppError(status.NOT_FOUND, "Farm member not found!");
-  }
+  const removed = await executeAtomically(async (session, undo) => {
+    const row = await FarmMemberModel.findOneAndDelete(
+      { _id: member._id, farmId: access.farm._id },
+      session ? { session } : {},
+    );
+    if (!row) throw new AppError(status.NOT_FOUND, "Farm member not found!");
+    if (before) undo.push(() => FarmMemberModel.create([before]));
+    return row;
+  }, { trace: entry, log: () => recordAuditLog(entry) });
   removeUserFromFarm(removed.userId, access.farm._id);
   return removed;
 };

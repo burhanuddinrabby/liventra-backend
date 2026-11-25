@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { userRouter } from "../modules/auth/auth.route.js";
+import { adminAuditLogRouter } from "../modules/auditLog/auditLog.route.js";
 import { breedRouter } from "../modules/breed/breed.route.js";
 import { farmRouter } from "../modules/farm/farm.route.js";
 import { feedIngredientRouter } from "../modules/feedIngredient/feedIngredient.route.js";
@@ -48,6 +49,10 @@ const moduleRoutes: TRoute[] = [
   {
     path: "/medicines",
     route: medicineRouter,
+  },
+  {
+    path: "/admin/audit-logs",
+    route: adminAuditLogRouter,
   },
 ];
 

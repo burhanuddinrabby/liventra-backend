@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import status from "http-status";
 import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
+import { auditContextFromRequest } from "../auditLog/auditLog.utils.js";
 import { FarmMemberServices } from "./farmMember.service.js";
 
 const createMember = catchAsync(async (req: Request, res: Response) => {
@@ -9,6 +10,7 @@ const createMember = catchAsync(async (req: Request, res: Response) => {
     req.params.farmId as string,
     req.user.userId,
     req.body,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.CREATED,
@@ -53,6 +55,7 @@ const updateMember = catchAsync(async (req: Request, res: Response) => {
     req.user.userId,
     req.params.memberId as string,
     req.body,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,
@@ -67,6 +70,7 @@ const toggleMemberActive = catchAsync(async (req: Request, res: Response) => {
     req.params.farmId as string,
     req.user.userId,
     req.params.memberId as string,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,
@@ -81,6 +85,7 @@ const deleteMember = catchAsync(async (req: Request, res: Response) => {
     req.params.farmId as string,
     req.user.userId,
     req.params.memberId as string,
+    auditContextFromRequest(req),
   );
   sendResponse(res, {
     statusCode: status.OK,

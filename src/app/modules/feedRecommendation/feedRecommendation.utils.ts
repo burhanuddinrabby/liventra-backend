@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import type { ClientSession } from "mongoose";
+import { beginAuditAttempt, publishCommittedAudits } from "../auditLog/auditLog.utils.js";
 import { RECOMMENDATION_NO_PREFIX } from "./feedRecommendation.constants.js";
 import { RecommendationCounterModel } from "./feedRecommendation.model.js";
 import {
@@ -83,7 +84,7 @@ const isTransactionUnsupported = (error: unknown) => {
   const err = error as { code?: number; message?: string };
   return (
     err?.code === 20 ||
-    /Transaction numbers are only allowed|replica set|does not support transactions/i.test(
+    /Transaction numbers are only allowed|replica set|does not support (transactions|retryable writes)/i.test(
       err?.message ?? "",
     )
   );
@@ -102,8 +103,10 @@ export const runInTransaction = async <T>(
   try {
     let result: T | undefined;
     await session.withTransaction(async () => {
+      beginAuditAttempt(session);
       result = await work(session);
     });
+    publishCommittedAudits(session);
     return result as T;
   } catch (error) {
     if (isTransactionUnsupported(error)) return work(null);

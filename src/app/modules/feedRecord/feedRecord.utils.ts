@@ -2,6 +2,8 @@ import status from "http-status";
 import { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
 import AppError from "../../errors/AppError.js";
+import { recordRolledBack, withAuditSession } from "../auditLog/auditLog.utils.js";
+import type { TRecordAuditInput } from "../auditLog/auditLog.utils.js";
 import { runInTransaction } from "../feedRecommendation/feedRecommendation.utils.js";
 import { MAX_TEXT_LENGTH } from "./feedRecord.constants.js";
 
@@ -119,24 +121,48 @@ export type TUndo = (() => Promise<unknown>)[];
  * undo step, and on failure the steps run in reverse so no half-applied
  * FeedRecord/stock state remains (spec §69–70 compensation).
  */
-export const executeAtomically = <T>(
+export type TAtomicAudit<T> = {
+  /**
+   * Last step of the same unit of work: audit rows written here commit or fail together
+   * with the change.
+   */
+  // eslint-disable-next-line no-unused-vars
+  log: (result: T) => Promise<unknown>;
+  /** What was attempted; written as `Rolled Back` when writes had begun and were reverted. */
+  trace: TRecordAuditInput;
+};
+
+export const executeAtomically = async <T>(
   // eslint-disable-next-line no-unused-vars
   work: (session: ClientSession | null, undo: TUndo) => Promise<T>,
-): Promise<T> =>
-  runInTransaction(async (session) => {
-    const undo: TUndo = [];
-    try {
-      return await work(session, undo);
-    } catch (error) {
-      if (!session) {
-        for (const step of undo.reverse()) {
-          try {
-            await step();
-          } catch (undoError) {
-            console.error("FeedRecord compensation step failed:", undoError);
+  auditing?: TAtomicAudit<T>,
+): Promise<T> => {
+  let began = false;
+  try {
+    return await runInTransaction(async (session) => {
+      const undo: TUndo = [];
+      began = false;
+      try {
+        const result = await work(session, undo);
+        if (auditing) await withAuditSession(session, () => auditing.log(result));
+        return result;
+      } catch (error) {
+        //every write registers an undo step
+        began = undo.length > 0;
+        if (!session) {
+          for (const step of undo.reverse()) {
+            try {
+              await step();
+            } catch (undoError) {
+              console.error("FeedRecord compensation step failed:", undoError);
+            }
           }
         }
+        throw error;
       }
-      throw error;
-    }
-  });
+    });
+  } catch (error) {
+    if (began && auditing) await recordRolledBack(auditing.trace);
+    throw error;
+  }
+};

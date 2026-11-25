@@ -20,6 +20,9 @@ userRouter.post('/register-user', upload.single('file'), (req: Request, res: Res
 //POST /api/v1/users/login
 userRouter.post('/login', validateRequest(userValidations.loginUserValidation), UserController.loginUser);
 
+//POST /api/v1/users/logout — records the sign-out and clears the refresh cookie
+userRouter.post('/logout', auth(SystemRoles.SUPER_ADMIN, SystemRoles.ADMIN, SystemRoles.USER), UserController.logoutUser);
+
 //POST /api/v1/users/forgot-password
 userRouter.post('/forgot-password', validateRequest(userValidations.forgotPasswordValidation), UserController.forgotPassword);
 

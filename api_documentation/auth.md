@@ -438,6 +438,17 @@ Sending neither returns 400 `"No file or URL provided for profile picture update
 
 ---
 
+### 12. Logout
+
+`POST /users/logout` (any signed-in user). Records the sign-out in the audit log and clears the `refreshToken` cookie.
+The access token itself stays valid until it expires, so the client must drop it. 200, no `data`.
+
+## Audit
+
+Register, login (success / failed), logout, password changed / reset, profile and picture updates, role changes,
+enable / disable and delete are recorded (`auditLog.md`). Passwords, tokens and the typed email of an unknown account are
+never stored.
+
 ## Notes
 
 - Soft-deleted or inactive accounts: login answers 403 `Account is inactive or deleted!` after a correct password. `GET /users` hides soft-deleted users.

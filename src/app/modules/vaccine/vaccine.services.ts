@@ -667,7 +667,7 @@ const getVaccineAuditLogs = async (ref: string, query: TPayload) => {
   const [total, logs] = await Promise.all([
     AuditLogModel.countDocuments(filter),
     AuditLogModel.find(filter)
-      .select("-__v -ipAddress -userAgent")
+      .select("-__v -ipAddress -userAgent -browser -operatingSystem -location")
       //actor identity only — no contact details in the audit timeline
       .populate("userId", "userId fullName systemRole")
       .sort({ createdAt: -1, _id: -1 })

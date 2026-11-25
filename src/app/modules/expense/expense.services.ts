@@ -3,6 +3,7 @@ import { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
 import AppError from "../../errors/AppError.js";
 import { AuditActions, AuditEntityTypes } from "../auditLog/auditLog.constants.js";
+import { withAuditSession } from "../auditLog/auditLog.utils.js";
 import type { TAuditContext } from "../auditLog/auditLog.utils.js";
 import { executeAtomically, isBlank, parseBoolean, parseEnum } from "../feedRecord/feedRecord.utils.js";
 import type { TPayload, TUndo } from "../feedRecord/feedRecord.utils.js";
@@ -378,8 +379,13 @@ const createExpense = async (farmId: string, requester: string, body: TPayload, 
       await assertPurchaseUnbooked(access.farmObjectId, reference.referenceId, session);
     }
     return insert(data, session, undo);
+  }, {
+    trace: ExpenseLedger.trace(context, access.farmObjectId, null, AuditActions.CREATE, "Expense Recorded"),
+    log: async (created) => {
+      
+      await auditCreated(context, access.farmObjectId, created, data);
+    },
   });
-  await auditCreated(context, access.farmObjectId, created, data);
 
   const warnings: string[] = [];
   if (STOCK_PURCHASE_CATEGORIES.includes(data.expenseCategory) && reference.referenceType === ExpenseReferenceTypes.MANUAL) {
@@ -435,7 +441,10 @@ const createPurchase = async (farmId: string, requester: string, body: TPayload,
       referenceId: transaction._id,
       createdBy: memberId,
     };
-    created = await insert(saved, session, undo);
+    const row = await insert(saved, session, undo);
+    created = row;
+    //same unit of work as the stock movement
+    await withAuditSession(session, () => auditCreated(context, access.farmObjectId, row, saved));
   };
 
   const supplier = common.paidTo ? { supplierName: common.paidTo } : {};
@@ -504,7 +513,6 @@ const createPurchase = async (farmId: string, requester: string, body: TPayload,
 
   const expenseRef = created as { _id: Types.ObjectId; expenseNo: string } | null;
   if (!expenseRef) throw new AppError(status.INTERNAL_SERVER_ERROR, "The purchase expense was not recorded!");
-  await auditCreated(context, access.farmObjectId, expenseRef, saved);
   const { warnings, ...item } = stock;
   return {
     expense: await ExpenseLedger.detailById(access.farmObjectId, expenseRef._id),
@@ -576,16 +584,23 @@ const updateExpense = async (farmId: string, ref: string, requester: string, bod
   }
 
   const pick = (source: Record<string, unknown>) => Object.fromEntries(changed.map((key) => [key, source[key] ?? null]));
-  await ExpenseLedger.write(access, row, pick(next), memberId);
-  await ExpenseLedger.audit(
-    context,
-    access.farmObjectId,
-    row._id,
-    AuditActions.UPDATE,
-    changed.some((key) => FINANCIAL_FIELDS.includes(key)) ? "Expense Corrected" : "Expense Updated",
-    pick(row),
-    { ...pick(next), ...(reason ? { reason } : {}) },
-    changed,
+  await ExpenseLedger.writeAudited(
+    access,
+    row,
+    pick(next),
+    memberId,
+    ExpenseLedger.trace(context, access.farmObjectId, row._id, AuditActions.UPDATE, "Expense Updated"),
+    () =>
+      ExpenseLedger.audit(
+        context,
+        access.farmObjectId,
+        row._id,
+        AuditActions.UPDATE,
+        changed.some((key) => FINANCIAL_FIELDS.includes(key)) ? "Expense Corrected" : "Expense Updated",
+        pick(row),
+        { ...pick(next), ...(reason ? { reason } : {}) },
+        changed,
+      ),
   );
   return { mode: "updated" as const, changedFields: changed, expense: await ExpenseLedger.detailById(access.farmObjectId, row._id) };
 };

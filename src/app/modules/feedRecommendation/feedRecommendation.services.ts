@@ -24,6 +24,8 @@ import {
   FeedFormulaStages,
   seasonForMonth,
 } from "../feedFormula/feedFormula.constants.js";
+import { executeAtomically } from "../feedRecord/feedRecord.utils.js";
+import type { TUndo } from "../feedRecord/feedRecord.utils.js";
 import { FeedFormulaServices } from "../feedFormula/feedFormula.services.js";
 import {
   convertQuantity,
@@ -70,7 +72,6 @@ import {
   escapeRegex,
   generateRecommendationNo,
   round,
-  runInTransaction,
 } from "./feedRecommendation.utils.js";
 
 type TPayload = Record<string, unknown>;
@@ -719,12 +720,22 @@ const audit = (
     changedFields,
   });
 
+/** Audit trace of an attempt, for the Rolled Back row. */
+const traceOf = (
+  context: TAuditContext | undefined,
+  farmId: Types.ObjectId,
+  entityId: Types.ObjectId | null,
+  action: TAuditAction,
+  event: string,
+) => ({ context, farmId, entityType: AuditEntityTypes.FEED_RECOMMENDATION, entityId, action, module: AuditModules.FEED, event });
+
 /** Marks the animal's other active plans Superseded (inside the caller's transaction). */
 const supersedePrevious = async (
   farmObjectId: Types.ObjectId,
   animalObjectId: Types.ObjectId,
   newId: Types.ObjectId,
   session: ClientSession | null,
+  undo: TUndo,
 ) => {
   const filter = {
     farmId: farmObjectId,
@@ -748,29 +759,38 @@ const supersedePrevious = async (
     },
     session ? { session } : {},
   );
+  undo.push(async () => {
+    for (const p of previous) {
+      await FeedRecommendationModel.updateOne(
+        { _id: p._id },
+        { $set: { status: p.status }, $unset: { supersededBy: 1, supersededAt: 1 } },
+      );
+    }
+  });
   return previous;
 };
 
-const auditSuperseded = (
+const auditSuperseded = async (
   context: TAuditContext,
   farmId: Types.ObjectId,
   previous: { _id: unknown; recommendationNo: string; status: string }[],
   newNo: string,
 ) =>
-  Promise.all(
-    previous.map((p) =>
-      audit(
-        context,
-        farmId,
-        p._id as Types.ObjectId,
-        AuditActions.UPDATE,
-        "Recommendation Superseded",
-        { status: p.status },
-        { status: FeedRecommendationStatuses.SUPERSEDED, supersededBy: newNo },
-        ["status", "supersededBy", "supersededAt"],
-      ),
-    ),
-  );
+{
+  //one by one: a transaction cannot run operations in parallel
+  for (const p of previous) {
+    await audit(
+      context,
+      farmId,
+      p._id as Types.ObjectId,
+      AuditActions.UPDATE,
+      "Recommendation Superseded",
+      { status: p.status },
+      { status: FeedRecommendationStatuses.SUPERSEDED, supersededBy: newNo },
+      ["status", "supersededBy", "supersededAt"],
+    );
+  }
+};
 
 /* -------------------------------------------------------------------------- */
 /*                                  Services                                  */
@@ -845,30 +865,28 @@ const createRecommendation = async (
     createdBy: memberId,
   };
 
-  const { created, superseded } = await runInTransaction(async (session) => {
+  const { created, superseded } = await executeAtomically(async (session, undo) => {
     const [doc] = await FeedRecommendationModel.create([data], session ? { session } : {});
     if (!doc) throw new AppError(status.INTERNAL_SERVER_ERROR, "Failed to save the recommendation!");
+    undo.push(() => FeedRecommendationModel.deleteOne({ _id: doc._id }));
     if (recordStatus !== FeedRecommendationStatuses.CONFIRMED) return { created: doc, superseded: [] };
-    try {
-      const prev = await supersedePrevious(access.farmObjectId, animalObjectId, doc._id, session);
-      return { created: doc, superseded: prev };
-    } catch (error) {
-      //no transaction (standalone mongod): compensate so no half-applied state remains
-      if (!session) await FeedRecommendationModel.deleteOne({ _id: doc._id });
-      throw error;
-    }
+    const prev = await supersedePrevious(access.farmObjectId, animalObjectId, doc._id, session, undo);
+    return { created: doc, superseded: prev };
+  }, {
+    trace: traceOf(context, access.farmObjectId, null, AuditActions.CREATE, "Recommendation"),
+    log: async ({ created, superseded }) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        created._id,
+        AuditActions.CREATE,
+        recordStatus === FeedRecommendationStatuses.CONFIRMED ? "Recommendation Confirmed" : "Recommendation Generated",
+        null,
+        auditSnapshot(created),
+      );
+      await auditSuperseded(context, access.farmObjectId, superseded, recommendationNo);
+    },
   });
-
-  await audit(
-    context,
-    access.farmObjectId,
-    created._id,
-    AuditActions.CREATE,
-    recordStatus === FeedRecommendationStatuses.CONFIRMED ? "Recommendation Confirmed" : "Recommendation Generated",
-    null,
-    auditSnapshot(created),
-  );
-  await auditSuperseded(context, access.farmObjectId, superseded, recommendationNo);
 
   return {
     recommendation: await loadDetail(created._id),
@@ -1130,7 +1148,7 @@ const updateStatus = async (
     }
   }
 
-  const superseded = await runInTransaction(async (session) => {
+  const superseded = await executeAtomically(async (session, undo) => {
     const set: Record<string, unknown> = { status: next };
     if (next === FeedRecommendationStatuses.REJECTED) {
       set.statusReason = reason;
@@ -1148,31 +1166,30 @@ const updateStatus = async (
     if (updated.modifiedCount !== 1) {
       throw new AppError(status.CONFLICT, "The recommendation was changed by someone else; reload and try again.");
     }
+    const previous = Object.fromEntries(
+      Object.keys(set).map((key) => [key, (doc as unknown as Record<string, unknown>)[key] ?? null]),
+    );
+    undo.push(() => FeedRecommendationModel.updateOne({ _id: doc._id }, { $set: previous }));
     if (next !== FeedRecommendationStatuses.CONFIRMED) return [];
-    try {
-      return await supersedePrevious(doc.farmId, doc.animalId, doc._id, session);
-    } catch (error) {
-      if (!session) {
-        await FeedRecommendationModel.updateOne({ _id: doc._id }, { $set: { status: doc.status } });
-      }
-      throw error;
-    }
+    return supersedePrevious(doc.farmId, doc.animalId, doc._id, session, undo);
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, `Recommendation ${next}`),
+    log: async (superseded) => {
+      await audit(
+        context,
+        doc.farmId,
+        doc._id,
+        next === FeedRecommendationStatuses.REJECTED ? AuditActions.REJECT : AuditActions.UPDATE,
+        next === FeedRecommendationStatuses.REJECTED ? "Recommendation Rejected" : "Recommendation Confirmed",
+        before,
+        { ...before, status: next, ...(reason ? { statusReason: reason } : {}) },
+        ["status", ...(reason ? ["statusReason"] : []), ...(next === FeedRecommendationStatuses.REJECTED ? ["reviewedBy", "reviewedAt"] : [])],
+      );
+      await auditSuperseded(context, doc.farmId, superseded, doc.recommendationNo);
+    },
   });
 
-  const fresh = await loadDetail(doc._id);
-  await audit(
-    context,
-    doc.farmId,
-    doc._id,
-    next === FeedRecommendationStatuses.REJECTED ? AuditActions.REJECT : AuditActions.UPDATE,
-    next === FeedRecommendationStatuses.REJECTED ? "Recommendation Rejected" : "Recommendation Confirmed",
-    before,
-    auditSnapshot((fresh ?? {}) as Record<string, unknown>),
-    ["status", ...(reason ? ["statusReason"] : []), ...(next === FeedRecommendationStatuses.REJECTED ? ["reviewedBy", "reviewedAt"] : [])],
-  );
-  await auditSuperseded(context, doc.farmId, superseded, doc.recommendationNo);
-
-  return { recommendation: fresh, supersededRecommendations: superseded.map((p) => p.recommendationNo) };
+  return { recommendation: await loadDetail(doc._id), supersededRecommendations: superseded.map((p) => p.recommendationNo) };
 };
 
 /** PATCH /:id/review — optional expert validation: Confirmed → Expert Approved | Rejected. */
@@ -1212,23 +1229,35 @@ const reviewRecommendation = async (
   };
   if (note) set.reviewNote = note;
   if (note && decision === FeedRecommendationStatuses.REJECTED) set.statusReason = note;
-  const updated = await FeedRecommendationModel.updateOne({ _id: doc._id, status: doc.status }, { $set: set });
-  if (updated.modifiedCount !== 1) {
-    throw new AppError(status.CONFLICT, "The recommendation was changed by someone else; reload and try again.");
-  }
-
-  const fresh = await loadDetail(doc._id);
-  await audit(
-    context,
-    doc.farmId,
-    doc._id,
-    decision === FeedRecommendationStatuses.REJECTED ? AuditActions.REJECT : AuditActions.APPROVE,
-    decision === FeedRecommendationStatuses.REJECTED ? "Recommendation Rejected" : "Recommendation Expert Approved",
-    before,
-    auditSnapshot((fresh ?? {}) as Record<string, unknown>),
-    Object.keys(set),
-  );
-  return fresh;
+  await executeAtomically(async (session, undo) => {
+    const updated = await FeedRecommendationModel.updateOne(
+      { _id: doc._id, status: doc.status },
+      { $set: set },
+      session ? { session } : {},
+    );
+    if (updated.modifiedCount !== 1) {
+      throw new AppError(status.CONFLICT, "The recommendation was changed by someone else; reload and try again.");
+    }
+    const previous = Object.fromEntries(
+      Object.keys(set).map((key) => [key, (doc as unknown as Record<string, unknown>)[key] ?? null]),
+    );
+    undo.push(() => FeedRecommendationModel.updateOne({ _id: doc._id }, { $set: previous }));
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.APPROVE, `Recommendation ${decision}`),
+    log: async () => {
+      await audit(
+        context,
+        doc.farmId,
+        doc._id,
+        decision === FeedRecommendationStatuses.REJECTED ? AuditActions.REJECT : AuditActions.APPROVE,
+        decision === FeedRecommendationStatuses.REJECTED ? "Recommendation Rejected" : "Recommendation Expert Approved",
+        before,
+        { ...before, status: decision, ...(note ? { reviewNote: note } : {}) },
+        Object.keys(set),
+      );
+    },
+  });
+  return loadDetail(doc._id);
 };
 
 /** DELETE /:id — Owner; only unconfirmed Draft records may be physically removed. */

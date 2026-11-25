@@ -4,6 +4,11 @@ import { isValidObjectId, Types } from "mongoose";
 import type { HydratedDocument } from "mongoose";
 import AppError from "../../errors/AppError.js";
 import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
+import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
+import type { TAuditAction } from "../auditLog/auditLog.interface.js";
+import { diffForAudit } from "../auditLog/auditLog.sanitize.js";
+import { recordAuditLog } from "../auditLog/auditLog.utils.js";
+import type { TAuditContext } from "../auditLog/auditLog.utils.js";
 import { BreedModel } from "../breed/breed.model.js";
 import { FarmModel } from "../farm/farm.model.js";
 import { FarmStatuses } from "../farm/farm.constants.js";
@@ -451,12 +456,21 @@ const loadAnimalDetail = async (animalObjectId: Types.ObjectId) =>
     .populate("createdBy", USER_POPULATE_FIELDS)
     .populate("updatedBy", USER_POPULATE_FIELDS);
 
+type TAnimalAudit = {
+  context?: TAuditContext | undefined;
+  event: string;
+  action?: TAuditAction;
+  /** Changes written outside set/unset (gallery). */
+  extra?: { oldData: TPayload; newData: TPayload; changedFields: string[] };
+};
+
 /** Applies $set/$unset (null clears an optional field) and returns the populated detail. */
 const applyAnimalUpdate = async (
   animal: TAnimalDoc,
   access: TAnimalAccess,
   set: TPayload,
-  unset: string[] = [],
+  unset: string[],
+  auditing: TAnimalAudit,
 ) => {
   const update: Record<string, unknown> = {
     $set: { ...set, updatedBy: access.userObjectId },
@@ -475,7 +489,28 @@ const applyAnimalUpdate = async (
     throw error;
   }
 
-  // TODO(AuditLog): record { oldData, newData, changedFields } once Model 24 exists.
+  const before = animal.toObject() as unknown as TPayload;
+  const fields = [...Object.keys(set), ...unset];
+  const changes = diffForAudit(
+    Object.fromEntries(fields.map((field) => [field, before[field] ?? null])),
+    Object.fromEntries(fields.map((field) => [field, set[field] ?? null])),
+  );
+  const changedFields = [...changes.changedFields, ...(auditing.extra?.changedFields ?? [])];
+  if (changedFields.length) {
+    await recordAuditLog({
+      context: auditing.context,
+      farmId: access.farmObjectId,
+      entityType: AuditEntityTypes.ANIMAL,
+      entityId: animal._id,
+      action: auditing.action ?? AuditActions.UPDATE,
+      module: AuditModules.ANIMAL,
+      event: auditing.event,
+      oldData: { ...changes.oldData, ...auditing.extra?.oldData },
+      newData: { ...changes.newData, ...auditing.extra?.newData },
+      changedFields,
+    });
+  }
+
   const updated = await loadAnimalDetail(animal._id);
   if (!updated) throw new AppError(status.NOT_FOUND, "Animal not found!");
   return toAnimalResponse(updated, access.canViewFinancials);
@@ -491,6 +526,7 @@ const createAnimal = async (
   requesterUserId: string,
   payload: TPayload,
   file?: Express.Multer.File,
+  context?: TAuditContext,
 ) => {
   try {
     if (file) await assertImageFiles([file]);
@@ -599,7 +635,16 @@ const createAnimal = async (
     }
 
     // TODO(WeightRecord): when Model 11 exists, create the initial WeightRecord from currentWeight.
-    // TODO(AuditLog): "Animal Registered".
+    await recordAuditLog({
+      context,
+      farmId: access.farmObjectId,
+      entityType: AuditEntityTypes.ANIMAL,
+      entityId: created._id,
+      action: AuditActions.CREATE,
+      module: AuditModules.ANIMAL,
+      event: "Animal Registered",
+      newData: { ...(data as unknown as TPayload), animalCode: created.animalCode, qrCode: created.qrCode },
+    });
 
     const detail = await loadAnimalDetail(created._id);
     return toAnimalResponse(detail ?? created, access.canViewFinancials);
@@ -869,6 +914,7 @@ const updateAnimal = async (
   requesterUserId: string,
   animalId: string,
   payload: TPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveAnimalAccess(farmId, requesterUserId);
   requireRole(access, AnimalPermissions.EDIT_PROFILE, "edit animal profiles");
@@ -936,7 +982,7 @@ const updateAnimal = async (
   assertPurchaseAfterBirth(nextBirthDate, nextPurchaseDate);
   assertReproductiveConsistency(animal.gender, animal.reproductiveStatus, nextBirthDate);
 
-  return applyAnimalUpdate(animal, access, set, unset);
+  return applyAnimalUpdate(animal, access, set, unset, { context, event: "Animal Updated" });
 };
 
 //PATCH /farms/:farmId/animals/:animalId/identification — Owner / Manager
@@ -945,6 +991,7 @@ const updateIdentification = async (
   requesterUserId: string,
   animalId: string,
   payload: TPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveAnimalAccess(farmId, requesterUserId);
   requireRole(access, AnimalPermissions.EDIT_IDENTIFICATION, "change animal identification");
@@ -991,7 +1038,7 @@ const updateIdentification = async (
     animal._id,
   );
 
-  return applyAnimalUpdate(animal, access, set, unset);
+  return applyAnimalUpdate(animal, access, set, unset, { context, event: "Animal Identification Updated" });
 };
 
 //PATCH /farms/:farmId/animals/:animalId/location — Owner / Manager / Worker
@@ -1000,6 +1047,7 @@ const updateLocation = async (
   requesterUserId: string,
   animalId: string,
   payload: TPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveAnimalAccess(farmId, requesterUserId);
   requireRole(access, AnimalPermissions.MOVE, "move animals");
@@ -1016,8 +1064,7 @@ const updateLocation = async (
   }
 
   //the whole object is replaced: it is the current location, not a merge of history
-  // TODO(AuditLog): "Location Changed" with old/new location.
-  return applyAnimalUpdate(animal, access, { location });
+  return applyAnimalUpdate(animal, access, { location }, [], { context, event: "Location Changed" });
 };
 
 const parseIdList = (field: string, value: unknown): string[] => {
@@ -1047,6 +1094,7 @@ const updateMedia = async (
   animalId: string,
   payload: TPayload,
   files: TUploadedFiles = {},
+  context?: TAuditContext,
 ) => {
   const profileFile = files.profilePhoto?.[0];
   const galleryFiles = files.gallery ?? [];
@@ -1147,8 +1195,25 @@ const updateMedia = async (
     if (profilePhotoChange === null) unset.push("profilePhoto");
     else if (profilePhotoChange !== undefined) set.profilePhoto = profilePhotoChange;
 
-    // TODO(AuditLog): "Profile Photo Updated".
-    return applyAnimalUpdate(animal, access, set, unset);
+    const photoChanged = profilePhotoChange !== undefined;
+    const galleryChanged = newItems.length > 0 || removeIds.length > 0;
+    return applyAnimalUpdate(animal, access, set, unset, {
+      context,
+      event: !galleryChanged ? "Profile Photo Updated" : photoChanged ? "Animal Media Updated" : "Animal Gallery Updated",
+      ...(galleryChanged
+        ? {
+            extra: {
+              oldData: {
+                galleryRemoved: animal.gallery
+                  .filter((item) => removeIds.includes(String(item._id)))
+                  .map((item) => item.url),
+              },
+              newData: { galleryAdded: newItems.map((item) => item.url) },
+              changedFields: ["gallery"],
+            },
+          }
+        : {}),
+    });
   } finally {
     await removeLocalFiles(allFiles);
   }
@@ -1160,6 +1225,7 @@ const updateLifecycle = async (
   requesterUserId: string,
   animalId: string,
   payload: TPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveAnimalAccess(farmId, requesterUserId);
   requireRole(access, AnimalPermissions.LIFECYCLE, "change an animal's life status");
@@ -1194,8 +1260,15 @@ const updateLifecycle = async (
   // TODO(DeviceAssignment): close active IoT device assignments when leaving Active (Model 26).
   //Sold here books no money: POST /incomes/animal-sale does both, and /incomes/reconciliation
   //flags animals marked Sold without an income.
-  // TODO(AuditLog): "Animal Sold" / "Animal Archived" / "Animal Reactivated" / "Animal Marked Dead".
-  return applyAnimalUpdate(animal, access, set);
+  const events: Partial<Record<TAnimalLifeStatus, string>> = {
+    [AnimalLifeStatuses.ACTIVE]: "Animal Reactivated",
+    [AnimalLifeStatuses.DEAD]: "Animal Marked Dead",
+  };
+  return applyAnimalUpdate(animal, access, set, [], {
+    context,
+    event: events[next] ?? `Animal ${next}`,
+    action: next === AnimalLifeStatuses.ARCHIVED ? AuditActions.ARCHIVE : AuditActions.UPDATE,
+  });
 };
 
 //PATCH /farms/:farmId/animals/:animalId/status — Owner / Manager / Veterinarian
@@ -1204,6 +1277,7 @@ const updateStatus = async (
   requesterUserId: string,
   animalId: string,
   payload: TPayload,
+  context?: TAuditContext,
 ) => {
   const access = await resolveAnimalAccess(farmId, requesterUserId);
   requireRole(access, AnimalPermissions.STATUS, "change health or reproductive status");
@@ -1234,8 +1308,10 @@ const updateStatus = async (
     );
   }
 
-  // TODO(AuditLog): "Health Status Changed" / "Reproductive Status Changed".
-  return applyAnimalUpdate(animal, access, set);
+  return applyAnimalUpdate(animal, access, set, [], {
+    context,
+    event: set.healthStatus ? "Health Status Changed" : "Reproductive Status Changed",
+  });
 };
 
 //DELETE /farms/:farmId/animals/:animalId — Owner only; soft delete => Archived + isActive false
@@ -1243,6 +1319,7 @@ const archiveAnimal = async (
   farmId: string,
   requesterUserId: string,
   animalId: string,
+  context?: TAuditContext,
 ) => {
   const access = await resolveAnimalAccess(farmId, requesterUserId);
   requireRole(access, AnimalPermissions.ARCHIVE, "remove animals");
@@ -1260,11 +1337,13 @@ const archiveAnimal = async (
     );
   }
 
-  // TODO(AuditLog): "Animal Archived".
-  return applyAnimalUpdate(animal, access, {
-    lifeStatus: AnimalLifeStatuses.ARCHIVED,
-    isActive: false,
-  });
+  return applyAnimalUpdate(
+    animal,
+    access,
+    { lifeStatus: AnimalLifeStatuses.ARCHIVED, isActive: false },
+    [],
+    { context, event: "Animal Archived", action: AuditActions.ARCHIVE },
+  );
 };
 
 export const AnimalServices = {

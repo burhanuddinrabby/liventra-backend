@@ -41,6 +41,15 @@ const auditLogSchema = new Schema<TAuditLog>(
     ipAddress: { type: String, immutable: true },
     userAgent: { type: String, immutable: true },
     deviceType: { type: String, enum: Object.values(AuditDeviceTypes), immutable: true },
+    browser: { type: String, immutable: true },
+    operatingSystem: { type: String, immutable: true },
+    location: {
+      type: new Schema(
+        { country: String, city: String, latitude: Number, longitude: Number },
+        { _id: false },
+      ),
+      immutable: true,
+    },
     requestId: { type: String, immutable: true },
     status: {
       type: String,
@@ -57,6 +66,24 @@ const auditLogSchema = new Schema<TAuditLog>(
 auditLogSchema.index({ entityType: 1, entityId: 1, createdAt: -1 });
 auditLogSchema.index({ farmId: 1, createdAt: -1 });
 auditLogSchema.index({ userId: 1, createdAt: -1 });
+auditLogSchema.index({ farmId: 1, userId: 1, createdAt: -1 });
+auditLogSchema.index({ farmId: 1, entityType: 1, entityId: 1, createdAt: -1 });
+auditLogSchema.index({ farmId: 1, module: 1, createdAt: -1 });
+auditLogSchema.index({ requestId: 1 });
+
+//append-only: no code path may change or remove a row
+const refuse = () => {
+  throw new Error("Audit log rows are append-only!");
+};
+auditLogSchema.pre(
+  ["updateOne", "updateMany", "findOneAndUpdate", "findOneAndReplace", "replaceOne", "deleteOne", "deleteMany", "findOneAndDelete"],
+  refuse,
+);
+auditLogSchema.pre(["updateOne", "deleteOne"], { document: true, query: false }, refuse);
+auditLogSchema.pre("save", function () {
+  if (!this.isNew) refuse();
+});
+auditLogSchema.pre("bulkWrite", refuse);
 
 export const AuditLogModel = model<TAuditLog>("AuditLog", auditLogSchema);
 

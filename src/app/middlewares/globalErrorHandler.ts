@@ -8,6 +8,7 @@ import handleCastError from "../errors/handleCastError.js";
 import handleDuplicateError from "../errors/handleDuplicateError.js";
 import config from "../config/index.js";
 import AppError from "../errors/AppError.js";
+import { recordRefusedWrite } from "../modules/auditLog/auditLog.refused.js";
 
 /* 
 success: false,
@@ -80,6 +81,8 @@ const globalErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
         `[${req.requestId}] ${req.method} ${req.originalUrl.split('?')[0]} -> ${statusCode}`,
         statusCode >= 500 ? (err?.stack ?? err) : (err?.name ?? '')
     );
+
+    if (statusCode === status.FORBIDDEN && err instanceof AppError) void recordRefusedWrite(req);
 
     res.status(statusCode).json({
         success: false,

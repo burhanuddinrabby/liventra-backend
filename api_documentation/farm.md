@@ -419,6 +419,10 @@ A suspend returns `"mode": "suspended"`, the updated farm and `"deleted": null`.
   endpoints — ownership transfer is the only workflow that changes it.
 - Inactive membership rows are retained as employment history; they do not grant farm access.
 
+## Audit
+
+Create, update, logo, status, owner transfer, suspend and permanent delete are recorded with the changed values. See `auditLog.md`; history of one record: `GET /farms/:farmId/audit-logs/entity/Farm/:id`.
+
 ## Error statuses
 
 | Status | Meaning |

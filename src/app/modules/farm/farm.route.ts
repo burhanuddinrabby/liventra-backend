@@ -19,6 +19,7 @@ import { animalTreatmentRouter, treatmentRouter } from "../treatment/treatment.r
 import { animalBreedingRouter, breedingRouter } from "../breeding/breeding.route.js";
 import { animalPregnancyRouter, pregnancyRouter } from "../pregnancy/pregnancy.route.js";
 import { inventoryRouter, inventoryTransactionRouter } from "../inventory/inventory.route.js";
+import { auditLogRouter } from "../auditLog/auditLog.route.js";
 import { expenseRouter } from "../expense/expense.route.js";
 import { financeRouter, incomeRouter } from "../income/income.route.js";
 
@@ -99,6 +100,7 @@ farmRouter.use("/:farmId/inventory", inventoryRouter);
 farmRouter.use("/:farmId/inventory-transactions", inventoryTransactionRouter);
 
 //finance: expenses, incomes and the profit / loss report
+farmRouter.use("/:farmId/audit-logs", auditLogRouter);
 farmRouter.use("/:farmId/expenses", expenseRouter);
 farmRouter.use("/:farmId/incomes", incomeRouter);
 farmRouter.use("/:farmId/finance", financeRouter);

@@ -842,6 +842,15 @@ const audit = (
     changedFields,
   });
 
+/** Audit trace of an attempt, for the Rolled Back row. */
+const traceOf = (
+  context: TAuditContext | undefined,
+  farmId: Types.ObjectId,
+  entityId: Types.ObjectId | null,
+  action: TAuditAction,
+  event: string,
+) => ({ context, farmId, entityType: AuditEntityTypes.TREATMENT, entityId, action, module: AuditModules.HEALTH, event });
+
 //keeps a short outcome trail in remarks without exceeding the field limit
 const appendRemark = (existing: string | undefined, tag: string, note: string | undefined) => {
   if (!note) return existing;
@@ -956,11 +965,14 @@ const createTreatment = async (farmId: string, requesterUserId: string, payload:
     undo.push(() => TreatmentModel.deleteOne({ _id: doc._id }));
     const change = await syncAnimalHealth(access, animal._id, "Created", session, undo);
     return { record: doc, health: change };
-  });
-
-  await audit(context, access.farmObjectId, record._id, AuditActions.CREATE, "Treatment Created", null, {
-    ...auditSnapshot(data),
-    animalHealthStatus: health,
+  }, {
+    trace: traceOf(context, access.farmObjectId, null, AuditActions.CREATE, "Treatment Created"),
+    log: async ({ record, health }) => {
+      await audit(context, access.farmObjectId, record._id, AuditActions.CREATE, "Treatment Created", null, {
+        ...auditSnapshot(data),
+        animalHealthStatus: health,
+      });
+    },
   });
 
   const today = startOfTodayUtc();
@@ -1051,6 +1063,8 @@ const changeStatus = async (
     );
   }
 
+  const event = reopening ? "Treatment Reopened" : `Treatment ${target}`;
+  const changed = Object.keys(set);
   const { health, movements } = await executeAtomically(async (session, undo) => {
     const updated = await TreatmentModel.findOneAndUpdate(
       { _id: doc._id, status: doc.status, updatedAt: doc.updatedAt },
@@ -1081,25 +1095,26 @@ const changeStatus = async (
       undo,
     );
     return { health: change, movements: moved };
-  });
-
-  const event = reopening ? "Treatment Reopened" : `Treatment ${target}`;
-  const changed = Object.keys(set);
-  await audit(
-    context,
-    access.farmObjectId,
-    doc._id,
-    AuditActions.UPDATE,
-    event,
-    Object.fromEntries(changed.map((k) => [k, (doc as unknown as Record<string, unknown>)[k] ?? null])),
-    {
-      ...set,
-      ...(movements.length ? { inventory: movements } : {}),
-      ...(holdsStock ? { restoreStock: body.restoreStock } : {}),
-      animalHealthStatus: health,
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, event),
+    log: async ({ health, movements }) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        doc._id,
+        AuditActions.UPDATE,
+        event,
+        Object.fromEntries(changed.map((k) => [k, (doc as unknown as Record<string, unknown>)[k] ?? null])),
+        {
+          ...set,
+          ...(movements.length ? { inventory: movements } : {}),
+          ...(holdsStock ? { restoreStock: body.restoreStock } : {}),
+          animalHealthStatus: health,
+        },
+        [...changed, ...(movements.length ? ["inventory"] : [])],
+      );
     },
-    [...changed, ...(movements.length ? ["inventory"] : [])],
-  );
+  });
 
   return {
     treatment: await loadDetail(access, doc._id),
@@ -1300,18 +1315,21 @@ const consumeInventory = async (
       });
     }
     return moved;
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, "Treatment Medicine Consumed"),
+    log: async (movements) => {
+      await audit(
+        context,
+        access.farmObjectId,
+        doc._id,
+        AuditActions.UPDATE,
+        "Treatment Medicine Consumed",
+        null,
+        { treatmentNo: doc.treatmentNo, inventory: movements, ...(remarks ? { remarks } : {}) },
+        ["inventory"],
+      );
+    },
   });
-
-  await audit(
-    context,
-    access.farmObjectId,
-    doc._id,
-    AuditActions.UPDATE,
-    "Treatment Medicine Consumed",
-    null,
-    { treatmentNo: doc.treatmentNo, inventory: movements, ...(remarks ? { remarks } : {}) },
-    ["inventory"],
-  );
 
   return { treatment: await loadDetail(access, doc._id), stockMovements: movements };
 };
@@ -1460,36 +1478,45 @@ const updateTreatment = async (
     if (dup) warnings.push(`Note: ${dup.treatmentNo} (${dup.status}) covers the same disease for this animal around that date.`);
   }
 
-  const updated = await TreatmentModel.findOneAndUpdate(
-    { _id: doc._id, status: doc.status, updatedAt: doc.updatedAt },
-    { $set: set },
-    { returnDocument: "after", runValidators: true },
-  );
-  if (!updated) throw new AppError(status.CONFLICT, "This treatment was changed by someone else. Reload and try again.");
-
-  const oldData: Record<string, unknown> = {};
-  const newData: Record<string, unknown> = {};
-  const before = auditSnapshot(doc) as Record<string, unknown>;
-  const after = auditSnapshot({ ...doc, ...(set as Partial<TTreatment>) }) as Record<string, unknown>;
-  for (const key of changedFields) {
-    oldData[key] = before[key] ?? (doc as unknown as Record<string, unknown>)[key] ?? null;
-    newData[key] = after[key] ?? set[key];
-  }
-  if (reason) newData.reason = reason;
-  let event = "Treatment Updated";
-  if (changedFields.length === 1) {
-    event =
-      {
-        medicines: "Medicines Changed",
-        followUpDate: "Follow-up Changed",
-        diseaseId: "Disease Changed",
-        diagnosisDate: "Diagnosis Date Changed",
-        treatedBy: "Treated By Changed",
-        estimatedCost: "Estimated Cost Changed",
-        symptoms: "Symptoms Changed",
-      }[changedFields[0] as string] ?? event;
-  }
-  await audit(context, access.farmObjectId, doc._id, AuditActions.UPDATE, event, oldData, newData, changedFields);
+  await executeAtomically(async (session, undo) => {
+    const updated = await TreatmentModel.findOneAndUpdate(
+      { _id: doc._id, status: doc.status, updatedAt: doc.updatedAt },
+      { $set: set },
+      { returnDocument: "after", runValidators: true, ...sessionOpts(session) },
+    );
+    if (!updated) throw new AppError(status.CONFLICT, "This treatment was changed by someone else. Reload and try again.");
+    const previous = Object.fromEntries(
+      Object.keys(set).map((key) => [key, (doc as unknown as Record<string, unknown>)[key] ?? null]),
+    );
+    undo.push(() => TreatmentModel.updateOne({ _id: doc._id }, { $set: previous }));
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.UPDATE, "Treatment Updated"),
+    log: async () => {
+      const oldData: Record<string, unknown> = {};
+      const newData: Record<string, unknown> = {};
+      const before = auditSnapshot(doc) as Record<string, unknown>;
+      const after = auditSnapshot({ ...doc, ...(set as Partial<TTreatment>) }) as Record<string, unknown>;
+      for (const key of changedFields) {
+        oldData[key] = before[key] ?? (doc as unknown as Record<string, unknown>)[key] ?? null;
+        newData[key] = after[key] ?? set[key];
+      }
+      if (reason) newData.reason = reason;
+      let event = "Treatment Updated";
+      if (changedFields.length === 1) {
+        event =
+          {
+            medicines: "Medicines Changed",
+            followUpDate: "Follow-up Changed",
+            diseaseId: "Disease Changed",
+            diagnosisDate: "Diagnosis Date Changed",
+            treatedBy: "Treated By Changed",
+            estimatedCost: "Estimated Cost Changed",
+            symptoms: "Symptoms Changed",
+          }[changedFields[0] as string] ?? event;
+      }
+      await audit(context, access.farmObjectId, doc._id, AuditActions.UPDATE, event, oldData, newData, changedFields);
+    },
+  });
 
   return { mode: "updated" as const, treatment: await loadDetail(access, doc._id), changedFields, warnings };
 };
@@ -1536,11 +1563,14 @@ const deleteTreatment = async (
     if (!removed.deletedCount) throw new AppError(status.CONFLICT, "This treatment was changed by someone else. Reload and try again.");
     undo.push(() => TreatmentModel.create([doc]));
     return syncAnimalHealth(access, doc.animalId, "Deleted", session, undo);
-  });
-
-  await audit(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Treatment Deleted", auditSnapshot(doc), {
-    ...(reason ? { reason } : {}),
-    animalHealthStatus: health,
+  }, {
+    trace: traceOf(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Treatment Deleted"),
+    log: async (health) => {
+      await audit(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Treatment Deleted", auditSnapshot(doc), {
+        ...(reason ? { reason } : {}),
+        animalHealthStatus: health,
+      });
+    },
   });
   return { _id: doc._id, treatmentNo: doc.treatmentNo, deleted: true, animalHealthStatus: health };
 };
