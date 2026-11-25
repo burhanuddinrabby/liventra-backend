@@ -1,6 +1,7 @@
 import status from "http-status";
 import { isValidObjectId } from "mongoose";
 import type { Model, Types } from "mongoose";
+import { NotificationModel } from "../notification/notification.model.js";
 import AppError from "../../errors/AppError.js";
 import { UserModel } from "../auth/auth.model.js";
 import { SystemRoles } from "../auth/auth.constants.js";
@@ -551,6 +552,7 @@ const FARM_DATA_SOURCES = [
   { key: "feedRecommendations", model: FeedRecommendationModel },
   { key: "inventoryTransactions", model: InventoryTransactionModel },
   { key: "inventories", model: InventoryModel },
+  { key: "notifications", model: NotificationModel },
   { key: "animals", model: AnimalModel },
   { key: "members", model: FarmMemberModel },
 ] as const;

@@ -1,6 +1,7 @@
 import status from "http-status";
 import { isValidObjectId, Types } from "mongoose";
 import type { ClientSession, PipelineStage } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 import type { TAuditAction } from "../auditLog/auditLog.interface.js";
@@ -488,8 +489,7 @@ const withDerived = <T extends TInventoryDoc>(row: T, now: Date = new Date()) =>
  * Low-stock / out-of-stock alert payload for a movement (spec 19 §78–81).
  * Returned only when the movement **crosses** the threshold, so repeated consumption
  * below the line does not raise the same alert again (spec 19 §80 de-duplication).
- * The Notification model (Model 23) is not built yet, so this travels in the API
- * response instead of being persisted.
+ * The matching notification is written by NotificationProducers.stockChanged().
  */
 const stockAlertFor = (
   before: TInventoryStatus,
@@ -702,6 +702,8 @@ const createInventoryItem = async (
       );
     },
   });
+
+  await NotificationProducers.stockChanged(access.farmObjectId, { _id: created.item._id });
 
   return {
     item: withDerived(created.item),
@@ -1225,8 +1227,7 @@ const getDashboardSummary = async (farmId: string, requesterUserId: string, quer
     expiredItems: cards?.expiredItems ?? [],
     recentTransactions,
     expiringDays,
-    //Notification (Model 23) is not built yet, so alerts are returned, not persisted
-    notificationsPersisted: false,
+    notificationsPersisted: true,
   };
 };
 
@@ -1680,6 +1681,7 @@ const updateInventoryItem = async (
     changedFields,
   );
 
+  await NotificationProducers.stockChanged(access.farmObjectId, { _id: item._id });
   return { mode: "updated" as const, changedFields, item: withDerived(updated as TInventoryDoc) };
 };
 
@@ -1741,6 +1743,8 @@ const toggleInventoryActive = async (
     ["status"],
   );
 
+  await NotificationProducers.stockChanged(access.farmObjectId, { _id: item._id });
+
   return {
     mode: nextActive ? ("activated" as const) : ("deactivated" as const),
     item: withDerived(updated as TInventoryDoc),
@@ -1752,9 +1756,8 @@ const toggleInventoryActive = async (
 
 /**
  * POST /farms/:farmId/inventory/sync-statuses — refresh the stored `status` of every
- * item from stock, thresholds and expiry. The project has no scheduler, so an item
- * whose expiryDate passed yesterday keeps a stale stored status until something writes
- * to it; reads already derive the right value, and this makes the stored one agree.
+ * item from stock, thresholds and expiry. The daily `inventory.sync` job does the same;
+ * reads already derive the right value, and this makes the stored one agree.
  */
 const syncInventoryStatuses = async (
   farmId: string,
@@ -1764,8 +1767,12 @@ const syncInventoryStatuses = async (
   const access = await resolveAccess(farmId, requesterUserId);
   requireRole(access, InventoryPermissions.SYNC_STATUS, "refresh inventory statuses");
   requireWritableFarm(access);
+  return refreshStatuses(access.farmObjectId, context);
+};
 
-  const rows = await InventoryModel.find({ farmId: access.farmObjectId })
+/** Stored statuses + stock notifications of one farm. No access check: the route and the job call it. */
+const refreshStatuses = async (farmObjectId: Types.ObjectId, context?: TAuditContext) => {
+  const rows = await InventoryModel.find({ farmId: farmObjectId })
     .select("inventoryCode itemName currentStock minimumStock reorderLevel expiryDate status")
     .lean();
 
@@ -1781,8 +1788,8 @@ const syncInventoryStatuses = async (
   if (changes.length) {
     await audit(
       context,
-      access.farmObjectId,
-      access.farmObjectId,
+      farmObjectId,
+      farmObjectId,
       AuditEntityTypes.INVENTORY,
       AuditActions.UPDATE,
       "Inventory Statuses Refreshed",
@@ -1792,6 +1799,7 @@ const syncInventoryStatuses = async (
     );
   }
 
+  await NotificationProducers.sweepFarmStock(farmObjectId);
   return { checked: rows.length, changed: changes.length, changes };
 };
 
@@ -1842,6 +1850,7 @@ const deleteInventoryItem = async (
       { inventoryCode: item.inventoryCode, itemName: item.itemName, itemType: item.itemType },
       null,
     );
+    await NotificationProducers.itemDeleted(access.farmObjectId, item._id);
     return {
       mode: "deleted" as const,
       inventoryCode: item.inventoryCode,
@@ -1875,6 +1884,8 @@ const deleteInventoryItem = async (
     { status: InventoryStatuses.INACTIVE, ...(reason ? { reason } : {}) },
     ["status"],
   );
+
+  await NotificationProducers.stockChanged(access.farmObjectId, { _id: item._id });
 
   return {
     mode: "deactivated" as const,
@@ -2236,6 +2247,7 @@ const createTransaction = async (
     },
   });
 
+  await NotificationProducers.stockChanged(access.farmObjectId, { _id: item._id });
   const alert = stockAlertFor(statusBefore, result.nextStatus, {
     itemName: item.itemName,
     inventoryCode: item.inventoryCode,
@@ -2775,6 +2787,8 @@ const reverseTransaction = async (
     },
   });
 
+  await NotificationProducers.stockChanged(access.farmObjectId, { _id: item._id });
+
   return {
     reversal: { ...result.transaction, delta, direction },
     original: {
@@ -2840,6 +2854,7 @@ export const InventoryServices = {
   updateInventoryItem,
   toggleInventoryActive,
   syncInventoryStatuses,
+  refreshStatuses,
   deleteInventoryItem,
   //Inventory_Transaction
   createTransaction,

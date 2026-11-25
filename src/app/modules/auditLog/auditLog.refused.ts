@@ -24,6 +24,7 @@ const TARGETS: Record<string, TTarget> = {
   "inventory-transactions": [AuditEntityTypes.INVENTORY_TRANSACTION, INVENTORY],
   expenses: [AuditEntityTypes.EXPENSE, FINANCE],
   incomes: [AuditEntityTypes.INCOME, FINANCE],
+  notifications: [AuditEntityTypes.NOTIFICATION, FARM],
 };
 
 const ACTIONS: Record<string, TAuditAction> = {

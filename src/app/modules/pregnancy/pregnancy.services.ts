@@ -3,6 +3,7 @@
 import status from "http-status";
 import mongoose, { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import {
@@ -415,6 +416,7 @@ const createPregnancy = async (
     return created;
   });
 
+  await NotificationProducers.pregnancyChanged(access.farmObjectId, result._id, "confirmed");
   const populated = await populatePregnancy(PregnancyModel.findById(result._id).select("-__v")).lean();
   return { pregnancy: populated };
 };
@@ -852,6 +854,7 @@ const deliverPregnancy = async (
     return updated;
   });
 
+  await NotificationProducers.pregnancyChanged(access.farmObjectId, result._id, "delivered");
   const populated = await populatePregnancy(PregnancyModel.findById(result._id).select("-__v")).lean();
   return { pregnancy: populated };
 };
@@ -932,6 +935,7 @@ const recordPregnancyOutcome = async (
     return { ...updated, notes };
   });
 
+  await NotificationProducers.pregnancyChanged(access.farmObjectId, doc._id);
   const populated = await populatePregnancy(PregnancyModel.findById(result._id).select("-__v")).lean();
   return {
     pregnancy: populated,
@@ -1044,6 +1048,7 @@ const updatePregnancy = async (
     return updated;
   });
 
+  await NotificationProducers.pregnancyChanged(access.farmObjectId, result._id);
   const populated = await populatePregnancy(PregnancyModel.findById(result._id).select("-__v")).lean();
   return { mode: "updated", pregnancy: populated, changedFields };
 };

@@ -17,12 +17,6 @@ const createUserValidation = z.object({
             district: z.string().min(1, { message: "District is required" }),
             country: z.string().min(1, { message: "Country is required" }),
         }),
-        emailVerified: z.boolean().optional(),
-        phoneVerified: z.boolean().optional(),
-        isActive: z.boolean().optional(),
-        systemRole: z.enum(Object.values(SystemRoles)).optional(),
-        lastLogin: z.string().optional(),
-        isDeleted: z.boolean().optional()
     })
 });
 

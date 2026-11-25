@@ -1,6 +1,7 @@
 import status from "http-status";
 import mongoose, { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import { AnimalLifeStatuses } from "../animal/animal.constants.js";
@@ -974,6 +975,9 @@ const createVaccination = async (
     },
   });
 
+  await NotificationProducers.vaccinationChanged(access.farmObjectId, data.animalId);
+  await NotificationProducers.stockMoved(access.farmObjectId, [movement]);
+
   return {
     vaccination: await loadDetail(access, record._id),
     doseStage: draft.doseStage,
@@ -1087,6 +1091,9 @@ const completeVaccination = async (
       );
     },
   });
+
+  await NotificationProducers.vaccinationChanged(access.farmObjectId, doc.animalId);
+  await NotificationProducers.stockMoved(access.farmObjectId, [movement]);
 
   return {
     vaccination: await loadDetail(access, doc._id),
@@ -1227,6 +1234,9 @@ const changeStatus = async (
       });
     },
   });
+
+  await NotificationProducers.vaccinationChanged(access.farmObjectId, doc.animalId);
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
 
   return {
     vaccination: await loadDetail(access, doc._id),
@@ -1431,6 +1441,9 @@ const updateVaccination = async (
     },
   });
 
+  await NotificationProducers.vaccinationChanged(access.farmObjectId, doc.animalId);
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
+
   return { mode: "corrected" as const, vaccination: await loadDetail(access, doc._id), stockMovements: movements, warnings };
 };
 
@@ -1468,6 +1481,7 @@ const deleteVaccination = async (farmId: string, id: string, requesterUserId: st
       await audit(context, access.farmObjectId, doc._id, AuditActions.DELETE, "Vaccination Deleted", auditSnapshot(doc), null);
     },
   });
+  await NotificationProducers.vaccinationChanged(access.farmObjectId, doc.animalId, doc._id);
   return { _id: doc._id, vaccinationNo: doc.vaccinationNo, deleted: true };
 };
 

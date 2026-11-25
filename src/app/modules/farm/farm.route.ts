@@ -20,6 +20,7 @@ import { animalBreedingRouter, breedingRouter } from "../breeding/breeding.route
 import { animalPregnancyRouter, pregnancyRouter } from "../pregnancy/pregnancy.route.js";
 import { inventoryRouter, inventoryTransactionRouter } from "../inventory/inventory.route.js";
 import { auditLogRouter } from "../auditLog/auditLog.route.js";
+import { farmNotificationRouter } from "../notification/notification.route.js";
 import { expenseRouter } from "../expense/expense.route.js";
 import { financeRouter, incomeRouter } from "../income/income.route.js";
 
@@ -99,8 +100,9 @@ farmRouter.use("/:farmId/inventory", inventoryRouter);
 // Inventory_Transaction (Model 20) — the farm's append-only stock ledger
 farmRouter.use("/:farmId/inventory-transactions", inventoryTransactionRouter);
 
-//finance: expenses, incomes and the profit / loss report
 farmRouter.use("/:farmId/audit-logs", auditLogRouter);
+farmRouter.use("/:farmId/notifications", farmNotificationRouter);
+//finance: expenses, incomes and the profit / loss report
 farmRouter.use("/:farmId/expenses", expenseRouter);
 farmRouter.use("/:farmId/incomes", incomeRouter);
 farmRouter.use("/:farmId/finance", financeRouter);

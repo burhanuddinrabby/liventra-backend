@@ -40,8 +40,21 @@ const accountEvent = (
     ...more,
 });
 
+//validateRequest discards the parsed body, so unknown keys still arrive here. Only these fields may
+//come from a client; role, verification and account-status fields are always set by the server.
+const REGISTER_FIELDS = ['fullName', 'phone', 'email', 'password', 'profilePicture', 'gender', 'dateOfBirth', 'address'] as const;
+const PROFILE_FIELDS = ['fullName', 'gender', 'dateOfBirth', 'address'] as const;
+const ADDRESS_FIELDS = ['village', 'postOffice', 'upazila', 'district', 'country'] as const;
+
+const pickFields = (source: object | undefined, allowed: readonly string[]): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(source ?? {}).filter(([key, value]) => allowed.includes(key) && value !== undefined));
+
 // const createUserIntoDB = async (userData: TUser) => {
-const createUserIntoDB = async (file: any, userData: TUser, context?: TAuditContext): Promise<TUser> => {
+const createUserIntoDB = async (file: any, payload: TUser, context?: TAuditContext): Promise<TUser> => {
+    const userData = {
+        ...pickFields(payload, REGISTER_FIELDS),
+        address: pickFields(payload.address, ADDRESS_FIELDS),
+    } as unknown as TUser;
     userData.userId = await generateUserId();
     if (file) {
         const imgName = `${userData?.fullName}-${userData?.userId}-img`;
@@ -236,29 +249,27 @@ const updateProfile = async (userId: string, payload: Partial<TUser>, context?: 
     if (!user) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
-    const { address, ...remaining } = payload;
+    const { address, ...remaining } = pickFields(payload, PROFILE_FIELDS);
 
     const modifiedData: Record<string, unknown> = { ...remaining };
-    if (address && Object.keys(address).length) {
-        for (const [key, value] of Object.entries(address)) {
-            modifiedData[`address.${key}`] = value
-        }
+    for (const [key, value] of Object.entries(pickFields(address as object | undefined, ADDRESS_FIELDS))) {
+        modifiedData[`address.${key}`] = value;
     }
-    if (payload.dateOfBirth) {
-        payload.dateOfBirth = new Date(payload.dateOfBirth as string | Date);
+    if (!Object.keys(modifiedData).length) {
+        throw new AppError(status.BAD_REQUEST, 'No data provided to update!');
     }
     //if req user is not the actual user taken from token
     // if (user.userId !== payload.userId) {
     //     throw new AppError(status.FORBIDDEN, 'You are not authorized to update this profile!');
     // }
-    const updated = await UserModel.findOneAndUpdate({ userId }, modifiedData, {
+    const updated = await UserModel.findOneAndUpdate({ userId }, { $set: modifiedData }, {
         returnDocument: 'after',
         // runValidators: true
     }).select('-password');
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
     }
-    const sent = (source: object) => Object.fromEntries(Object.entries(source).filter(([key]) => key in payload));
+    const sent = (source: object) => Object.fromEntries(Object.entries(source).filter(([key]) => key === 'address' ? !!address : key in remaining));
     const changes = diffForAudit(sent(user.toObject()), sent(updated.toObject()));
     if (changes.changedFields.length) {
         await recordAuditLog(accountEvent(context, updated, AuditActions.UPDATE, 'Profile Updated', changes));

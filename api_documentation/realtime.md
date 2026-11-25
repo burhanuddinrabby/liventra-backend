@@ -28,7 +28,7 @@ io("http://localhost:5000", { auth: { token: accessToken } });
 | server → client | `audit.revoked` | `{ farmId }` | membership changed; subscribe again if still wanted |
 | server → client | `audit.created` | `{ logId, logNo, entityType, entityId, action, module, status, createdAt }` | to `audit.subscribe` subscribers, after commit (`auditLog.md`) |
 
-`notification.created` arrives with plan 4.
+`notification.created` and `notification.updated` go to the user's own room (`notification.md`).
 
 Server helpers (`src/app/realtime/realtime.ts`), never throw, call **after commit**: `emitToUser`, `emitToAuditRoom`,
 `removeUserFromFarm`, `closeFarmRooms`, `disconnectUser`. One backend process only: more need a Redis adapter.

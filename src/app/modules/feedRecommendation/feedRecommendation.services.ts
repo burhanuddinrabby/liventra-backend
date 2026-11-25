@@ -1,6 +1,7 @@
 import status from "http-status";
 import mongoose, { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import { AnimalLifeStatuses } from "../animal/animal.constants.js";
@@ -888,6 +889,10 @@ const createRecommendation = async (
     },
   });
 
+  if (recordStatus === FeedRecommendationStatuses.CONFIRMED) {
+    await NotificationProducers.feedPlansChanged(access.farmObjectId, [created._id, ...superseded.map((p) => p._id)]);
+  }
+
   return {
     recommendation: await loadDetail(created._id),
     supersededRecommendations: superseded.map((p) => p.recommendationNo),
@@ -1189,6 +1194,7 @@ const updateStatus = async (
     },
   });
 
+  await NotificationProducers.feedPlansChanged(access.farmObjectId, [doc._id, ...superseded.map((p) => p._id)]);
   return { recommendation: await loadDetail(doc._id), supersededRecommendations: superseded.map((p) => p.recommendationNo) };
 };
 
@@ -1257,6 +1263,7 @@ const reviewRecommendation = async (
       );
     },
   });
+  if (decision === FeedRecommendationStatuses.REJECTED) await NotificationProducers.feedPlansChanged(access.farmObjectId, [doc._id]);
   return loadDetail(doc._id);
 };
 

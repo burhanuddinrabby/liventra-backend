@@ -1,6 +1,7 @@
 import status from "http-status";
 import mongoose, { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import {
@@ -725,11 +726,12 @@ const createBreeding = async (farmId: string, requesterUserId: string, payload: 
   const record = await BreedingModel.create(data);
 
   await audit(context, access.farmObjectId, "Breeding", record._id, AuditActions.CREATE, "Breeding Created", null, auditSnapshot(data));
+  await NotificationProducers.breedingChanged(access.farmObjectId, data.animalId);
 
   const today = startOfTodayUtc();
   return {
     breeding: await loadDetail(access, record._id),
-    //no Notification module yet: the reminder is derived and surfaced on /pregnancy-checks
+    //also surfaced on /pregnancy-checks; the reminder itself is a notification
     pregnancyCheckReminder: {
       expectedPregnancyCheckDate: dates.expectedPregnancyCheckDate,
       dueInDays: daysBetween(today, dates.expectedPregnancyCheckDate),
@@ -1010,11 +1012,20 @@ const recordPregnancyResult = async (
     );
   }
 
+  await NotificationProducers.breedingChanged(access.farmObjectId, doc.animalId);
+  if (result.pregnancy) {
+    await NotificationProducers.pregnancyChanged(
+      access.farmObjectId,
+      result.pregnancy._id,
+      result.pregnancy.action === "Closed" ? undefined : "confirmed",
+    );
+  }
+
   return {
     breeding: await loadDetail(access, doc._id),
     pregnancy: result.pregnancy,
     animalReproductiveStatus: result.reproductiveStatus,
-    //no Notification module yet: the calving reminder is derived from the Pregnancy record
+    //derived from the Pregnancy record; the reminder itself is a notification
     calvingReminder:
       target === PregnancyResults.CONFIRMED && expectedCalvingDate
         ? { expectedCalvingDate, dueInDays: daysBetween(today, expectedCalvingDate) }
@@ -1188,6 +1199,7 @@ const updateBreeding = async (
   }
   await audit(context, access.farmObjectId, "Breeding", doc._id, AuditActions.UPDATE, event, oldData, newData, changedFields);
 
+  await NotificationProducers.breedingChanged(access.farmObjectId, doc.animalId);
   return { mode: "updated" as const, breeding: await loadDetail(access, doc._id), changedFields, warnings };
 };
 
@@ -1229,6 +1241,7 @@ const deleteBreeding = async (
   if (!removed.deletedCount) throw new AppError(status.CONFLICT, "This breeding record was changed by someone else. Reload and try again.");
 
   await audit(context, access.farmObjectId, "Breeding", doc._id, AuditActions.DELETE, "Breeding Deleted", auditSnapshot(doc), { reason });
+  await NotificationProducers.breedingChanged(access.farmObjectId, doc.animalId);
   return { _id: doc._id, breedingNo: doc.breedingNo, deleted: true };
 };
 

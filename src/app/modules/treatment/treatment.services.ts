@@ -1,6 +1,7 @@
 import status from "http-status";
 import mongoose, { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import { AnimalHealthStatuses, AnimalLifeStatuses } from "../animal/animal.constants.js";
@@ -975,11 +976,12 @@ const createTreatment = async (farmId: string, requesterUserId: string, payload:
     },
   });
 
+  await NotificationProducers.treatmentChanged(access.farmObjectId, record._id);
   const today = startOfTodayUtc();
   return {
     treatment: await loadDetail(access, record._id),
     animalHealthStatus: health ?? { from: animal.healthStatus, to: animal.healthStatus },
-    //no Notification module yet: the reminder is derived and surfaced on /follow-ups
+    //also surfaced on /follow-ups; the reminder itself is a notification
     followUpReminder: followUpDate ? { followUpDate, dueInDays: daysBetween(today, followUpDate) } : null,
     warnings,
   };
@@ -1115,6 +1117,9 @@ const changeStatus = async (
       );
     },
   });
+
+  await NotificationProducers.treatmentChanged(access.farmObjectId, doc._id);
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
 
   return {
     treatment: await loadDetail(access, doc._id),
@@ -1331,6 +1336,7 @@ const consumeInventory = async (
     },
   });
 
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
   return { treatment: await loadDetail(access, doc._id), stockMovements: movements };
 };
 
@@ -1518,6 +1524,7 @@ const updateTreatment = async (
     },
   });
 
+  await NotificationProducers.treatmentChanged(access.farmObjectId, doc._id);
   return { mode: "updated" as const, treatment: await loadDetail(access, doc._id), changedFields, warnings };
 };
 
@@ -1572,6 +1579,7 @@ const deleteTreatment = async (
       });
     },
   });
+  await NotificationProducers.treatmentChanged(access.farmObjectId, doc._id);
   return { _id: doc._id, treatmentNo: doc.treatmentNo, deleted: true, animalHealthStatus: health };
 };
 

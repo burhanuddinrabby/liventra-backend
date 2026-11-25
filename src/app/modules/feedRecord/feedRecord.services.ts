@@ -1,6 +1,7 @@
 import status from "http-status";
 import mongoose, { isValidObjectId, Types } from "mongoose";
 import type { ClientSession } from "mongoose";
+import { NotificationProducers } from "../notification/notification.producers.js";
 import AppError from "../../errors/AppError.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import { AnimalLifeStatuses } from "../animal/animal.constants.js";
@@ -968,6 +969,7 @@ const createFeedRecord = async (farmId: string, requesterUserId: string, payload
     inventory: movements,
   });
 
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
   return { feedRecord: await loadDetail(access, record._id), stockMovements: movements, warnings: draft.warnings };
 };
 
@@ -1084,6 +1086,7 @@ const updateFeedRecord = async (
     changedFields,
   );
 
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
   return { mode: "updated", feedRecord: await loadDetail(access, doc._id), stockMovements: movements, warnings: draft.warnings };
 };
 
@@ -1150,6 +1153,7 @@ const voidFeedRecord = async (
     ["isVoided", "voidedAt", "voidedBy", ...(reason ? ["voidReason"] : [])],
   );
 
+  await NotificationProducers.stockMoved(access.farmObjectId, movements);
   return { _id: doc._id, isVoided: true, voidedAt, stockMovements: movements, warnings };
 };
 

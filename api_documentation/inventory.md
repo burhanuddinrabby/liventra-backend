@@ -54,7 +54,7 @@ Inactive  →  Expired (expiryDate < now)  →  Out of Stock (stock ≤ 0)
 ```
 
 Reads always return the freshly derived value as `derivedStatus` next to the stored `status`.
-Because the project has no scheduler, an item that expired overnight keeps a stale **stored** status until
+Until the daily `inventory.sync` job runs, an item that expired overnight keeps a stale **stored** status until
 something writes to it — `POST /inventory/sync-statuses` brings the stored values in line.
 
 ## Model — Inventory_Transaction (final DB schema)
@@ -288,14 +288,13 @@ The active FeedIngredient / Medicine / Vaccine catalog rows (`?searchTerm=`, `?l
   "byItemType": [ { "_id": "Feed", "items": 9, "estimatedValue": 120400, "lowStock": 2, "outOfStock": 0 } ],
   "reorderRecommendations": [ { "inventoryCode": "INV-2026-000004", "itemName": "Oxytetracycline", "currentStock": 6, "recommendedReorderQuantity": 14, "estimatedReorderCost": 2520, "derivedStatus": "Low Stock" } ],
   "expiringSoon": [ … ], "expiredItems": [ … ], "recentTransactions": [ … ],
-  "notificationsPersisted": false
+  "notificationsPersisted": true
 }
 ```
 
 `recommendedReorderQuantity = maximumStock − currentStock`, and only for items at or below their reorder
 line (when no maximum is set it falls back to twice the threshold).
-`notificationsPersisted: false` is honest about the Notification model (Model 23) not being built yet —
-alerts travel in API responses today instead of being stored.
+Alerts are also stored as notifications (`notification.md`).
 
 ## 7. GET `/inventory/alerts`
 
@@ -476,7 +475,7 @@ consumption below the reorder line does not raise the same warning again:
 { "level": "warning", "status": "Low Stock", "message": "Oxytetracycline (INV-2026-000004) stock is at or below its reorder level (6 bottle left)." }
 ```
 
-`level: "critical"` for out of stock. Nothing is persisted — Notification (Model 23) is not built yet.
+`level: "critical"` for out of stock. The matching notification is stored too (`notification.md`).
 
 ## 16. GET `/inventory-transactions` — list
 
@@ -582,6 +581,6 @@ the stock never disagree.
 - **Expense link.** A purchase may carry `referenceType: "Expense"` + `referenceId` (verified in this farm). Recording a purchase here creates no Expense; `POST /expenses/purchase` does both at once, and `GET /expenses/reconciliation` lists purchases without one (see `expense.md`).
 - **No Notification rows.** Low-stock / out-of-stock alerts are returned by the API (`alert`,
   `/inventory/alerts`, `dashboard-summary`) until Model 23 exists.
-- **No scheduler.** `POST /inventory/sync-statuses` is the manual stand-in for a nightly expiry job.
+- `POST /inventory/sync-statuses` is the manual version of the daily `inventory.sync` job (needs `JOBS_ENABLED=true`).
 - **Equipment** is tracked as a countable stock item only (no serial number, maintenance schedule or
   asset condition).

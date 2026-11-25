@@ -45,7 +45,7 @@ Roles: `user`, `admin`, `superAdmin` (see `SystemRoles` in `src/app/modules/auth
 }
 ```
 
-Required: `fullName`, `phone`, `email`, `password` (min 8), `address.upazila`, `address.district`, `address.country`. Optional: `profilePicture`, `gender`, `dateOfBirth`, `emailVerified`, `phoneVerified`, `isActive`, `systemRole`, `lastLogin`, `isDeleted`.
+Required: `fullName`, `phone`, `email`, `password` (min 8), `address.upazila`, `address.district`, `address.country`. Optional: `profilePicture`, `gender`, `dateOfBirth`, `address.village`, `address.postOffice`. Every other field (`systemRole`, `emailVerified`, `isActive`, …) is ignored: the server sets it. `PUT /users/profile` likewise accepts only `fullName`, `gender`, `dateOfBirth` and `address`.
 
 - **Successful response** (200):
 
