@@ -75,6 +75,12 @@ const globalErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
     message = simplifiedError?.message;
     errorSources = simplifiedError?.errorSources;
 
+    //no query string, body or client-error text here: they can hold tokens and personal data
+    console.log(
+        `[${req.requestId}] ${req.method} ${req.originalUrl.split('?')[0]} -> ${statusCode}`,
+        statusCode >= 500 ? (err?.stack ?? err) : (err?.name ?? '')
+    );
+
     res.status(statusCode).json({
         success: false,
         message,

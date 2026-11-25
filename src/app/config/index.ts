@@ -3,6 +3,8 @@ import path from 'path';
 
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
+const trustProxy = Number(process.env.TRUST_PROXY);
+
 export default {
     node_env: process.env.NODE_ENV,
     port: process.env.PORT,
@@ -21,4 +23,13 @@ export default {
     cloudinary_name: process.env.CLOUDINARY_NAME || "delete",
     cloudinary_key: process.env.CLOUDINARY_KEY,
     cloudinary_secret: process.env.CLOUDINARY_SECRET,
+    //browser origins; an origin never ends with a slash
+    client_origins: (process.env.CLIENT_ORIGINS ?? '')
+        .split(',')
+        .map((origin) => origin.trim().replace(/\/+$/, ''))
+        .filter(Boolean),
+    app_timezone: process.env.APP_TIMEZONE || 'Asia/Dhaka',
+    jobs_enabled: process.env.JOBS_ENABLED === 'true',
+    //number of proxies in front of the server
+    trust_proxy: Number.isInteger(trustProxy) && trustProxy >= 0 ? trustProxy : 0,
 };

@@ -27,6 +27,7 @@ import { InventoryModel, InventoryTransactionModel } from "../inventory/inventor
 import { ExpenseModel } from "../expense/expense.model.js";
 import { IncomeModel } from "../income/income.model.js";
 import { removeFarmAttachments } from "../finance/finance.utils.js";
+import { closeFarmRooms, removeUserFromFarm } from "../../realtime/realtime.js";
 import { recordAuditLog, type TAuditContext } from "../auditLog/auditLog.utils.js";
 import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 
@@ -465,6 +466,8 @@ const transferFarmOwnership = async (farmId: string, requesterUserId: string, ne
     throw error;
   }
 
+  //the old owner's live access was granted as Owner
+  removeUserFromFarm(farm.ownerId, farm._id);
   await updated.populate("ownerId", "userId fullName email phone profilePicture");
   return updated;
 };
@@ -631,6 +634,7 @@ const deleteFarm = async (
 
   const oldData = farm.toObject() as unknown as Record<string, unknown>;
   await FarmModel.deleteOne({ _id: farm._id });
+  closeFarmRooms(farm._id);
 
   await recordAuditLog({
     context,

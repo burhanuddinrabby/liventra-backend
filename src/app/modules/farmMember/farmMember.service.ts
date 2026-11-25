@@ -15,6 +15,7 @@ import {
   isAssignableFarmMemberRole,
   isFarmOwner,
 } from "./farmMember.utils.js";
+import { removeUserFromFarm } from "../../realtime/realtime.js";
 import type { TFarmMember, TFarmMemberRole } from "./farmMember.interface.js";
 
 //fields exposed from the populated User — FarmMember never duplicates profile data
@@ -603,13 +604,16 @@ const updateMember = async (
   if (Object.keys(updates).length > 0) updateDocument.$set = updates;
   if (Object.keys(unset).length > 0) updateDocument.$unset = unset;
 
-  return FarmMemberModel.findOneAndUpdate(
+  const updated = await FarmMemberModel.findOneAndUpdate(
     { _id: member._id, farmId: access.farm._id },
     updateDocument,
     { returnDocument: 'after', runValidators: true },
   )
     .select("+nid +salary")
     .populate("userId", USER_POPULATE_FIELDS);
+  //live access was granted with the old membership
+  if (updates.role) removeUserFromFarm(member.userId._id, access.farm._id);
+  return updated;
 };
 
 /**
@@ -671,13 +675,16 @@ const toggleMemberActive = async (
     }
   }
 
-  return FarmMemberModel.findOneAndUpdate(
+  const updated = await FarmMemberModel.findOneAndUpdate(
     { _id: member._id, farmId: access.farm._id },
     { $set: { isActive: nextActive } },
     { returnDocument: 'after', runValidators: true },
   )
     .select("+nid +salary")
     .populate("userId", USER_POPULATE_FIELDS);
+  //live access was granted with the old membership
+  if (!nextActive) removeUserFromFarm(member.userId._id, access.farm._id);
+  return updated;
 };
 
 /**
@@ -714,6 +721,7 @@ const deleteMember = async (
   if (!removed) {
     throw new AppError(status.NOT_FOUND, "Farm member not found!");
   }
+  removeUserFromFarm(removed.userId, access.farm._id);
   return removed;
 };
 

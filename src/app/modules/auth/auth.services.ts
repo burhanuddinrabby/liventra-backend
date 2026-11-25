@@ -12,6 +12,7 @@ import { uploadImageToCloudinary } from "../../utils/uploadImage.js";
 import { sendMails } from "../../utils/sendMail.js";
 import QueryBuilder from "../../builder/QueryBuilder.js";
 import crypto from 'crypto';
+import { disconnectUser } from "../../realtime/realtime.js";
 
 // const createUserIntoDB = async (userData: TUser) => {
 const createUserIntoDB = async (file: any, userData: TUser): Promise<TUser> => {
@@ -50,6 +51,10 @@ const loginUser = async (email: string, password: string): Promise<{
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
         throw new AppError(status.FORBIDDEN, 'Wrong password!');
+    }
+    //after the password check, so it cannot be used to probe accounts
+    if (!user.isActive || user.isDeleted) {
+        throw new AppError(status.FORBIDDEN, 'Account is inactive or deleted!');
     }
     const jwtPayload = {
         userId: user.userId,
@@ -264,6 +269,8 @@ const updateSystemRole = async (userId: string, systemRole: string): Promise<TUs
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
+    //live rooms were granted with the old role; the client reconnects and is checked again
+    disconnectUser(updated._id);
     return updated;
 }
 
@@ -281,6 +288,7 @@ const toggleActive = async (userId: string): Promise<TUser> => {
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found, update failed!');
     }
+    if (!updated.isActive) disconnectUser(updated._id);
     return updated;
 }
 
@@ -294,6 +302,7 @@ const deleteUser = async (userId: string): Promise<TUser> => {
     if (!updated) {
         throw new AppError(status.NOT_FOUND, 'User not found!');
     }
+    disconnectUser(updated._id);
     return updated;
 }
 

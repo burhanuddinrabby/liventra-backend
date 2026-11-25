@@ -5,6 +5,8 @@ import AppError from "./app/errors/AppError.js";
 import status from "http-status";
 import mongoose from "mongoose";
 import seedSuperAdmin from "./app/DB/index.js";
+import { initRealtime } from "./app/realtime/realtime.js";
+import { startJobs } from "./app/jobs/scheduler.js";
 import { FarmMemberServices } from "./app/modules/farmMember/farmMember.service.js";
 
 let server: Server;
@@ -26,6 +28,8 @@ async function main() {
     server = app.listen(config.port, () => {
         console.log(`The app listening on port ${config.port}`);
     });
+    initRealtime(server);
+    startJobs();
 }
 main().catch(err => console.log(err));
 

@@ -440,6 +440,6 @@ Sending neither returns 400 `"No file or URL provided for profile picture update
 
 ## Notes
 
-- Soft-deleted users are hidden from all `find`/`findOne` queries (schema pre-hook), so `GET /users`, login, and profile lookups will not return them.
+- Soft-deleted or inactive accounts: login answers 403 `Account is inactive or deleted!` after a correct password. `GET /users` hides soft-deleted users.
 - Every endpoint above returns **200** on success (controllers use `status.OK`), including register.
 - Common failures: 400 (missing file/url, Zod validation), 403 (wrong password / missing or insufficient role), 404 (unknown `userId`), 401/403 (bad or expired token).
