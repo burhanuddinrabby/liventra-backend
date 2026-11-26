@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import config from "../config/index.js";
+import { deviceJobs } from "./device.jobs.js";
 import { notificationJobs } from "./notification.jobs.js";
 import { runJob } from "./runJob.js";
 
@@ -11,7 +12,7 @@ export type TJob = {
 };
 
 //every job must be safe to repeat
-const jobs: TJob[] = [...notificationJobs];
+const jobs: TJob[] = [...notificationJobs, ...deviceJobs];
 
 /** Never throws: a bad schedule or timezone must not stop the API. */
 export const startJobs = (list: TJob[] = jobs): void => {

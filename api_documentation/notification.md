@@ -38,9 +38,14 @@ an active account, on an Active farm.
 | Feed Recommendation Ready | plan confirmed | Reminder Medium | O M W |
 | Low Stock / Out of Stock | stock state | Alert High / Critical | O M |
 | Item Expiring Soon / This Week / Expired | ≤ 30 / ≤ 7 days, past; item has stock | Warning Medium / High / High | O M |
+| Device Offline | no sync for 24 h (hourly job); reference `Manual` | Warning High | O M |
+| Warranty Expiring | ≤ 30 days (daily job); reference `Manual` | Warning Medium | O M |
 
 - Timed rows expire one day after the due day (overdue ones after 30). One row per recipient, record, stage and due
   date; a new date expires the old row and tells again.
+- A row closed early (record closed or moved) is reopened, unread, when the same due holds again.
+- The schema has no Device reference type, so device rows have no `referenceId`: their message starts with the device
+  code. Once per outage / per expiry date; a sync or a change that ends the state expires them.
 - Stock and disease rows are not repeated while the state lasts, even when archived; they can come again after it ended.
 - Completing, cancelling or deleting the record expires its open rows. Days are UTC, like on the other screens.
 
@@ -50,7 +55,7 @@ room after the write. Hints only: refetch through REST.
 
 ## Jobs (need `JOBS_ENABLED=true`)
 `notification.reminders` (hourly), `notification.expire` (hourly, :05), `inventory.sync` (daily 00:15: item statuses and
-stock alerts). Without jobs only the hooks of the business modules create rows.
+stock alerts), `device.connectivity` (hourly, :10), `device.warranty` (daily 00:20). Without jobs only the hooks of the business modules create rows.
 
 ## Code
 `modules/notification/`: `producers` (reads saved records; hooks run after commit and never throw), `delivery`

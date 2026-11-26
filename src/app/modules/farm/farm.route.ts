@@ -21,6 +21,7 @@ import { animalPregnancyRouter, pregnancyRouter } from "../pregnancy/pregnancy.r
 import { inventoryRouter, inventoryTransactionRouter } from "../inventory/inventory.route.js";
 import { auditLogRouter } from "../auditLog/auditLog.route.js";
 import { farmNotificationRouter } from "../notification/notification.route.js";
+import { deviceRouter } from "../device/device.route.js";
 import { expenseRouter } from "../expense/expense.route.js";
 import { financeRouter, incomeRouter } from "../income/income.route.js";
 
@@ -102,6 +103,7 @@ farmRouter.use("/:farmId/inventory-transactions", inventoryTransactionRouter);
 
 farmRouter.use("/:farmId/audit-logs", auditLogRouter);
 farmRouter.use("/:farmId/notifications", farmNotificationRouter);
+farmRouter.use("/:farmId/devices", deviceRouter);
 //finance: expenses, incomes and the profit / loss report
 farmRouter.use("/:farmId/expenses", expenseRouter);
 farmRouter.use("/:farmId/incomes", incomeRouter);

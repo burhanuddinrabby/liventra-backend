@@ -5,6 +5,7 @@ import { FarmStatuses } from "../farm/farm.constants.js";
 import { FarmModel } from "../farm/farm.model.js";
 import { FarmMemberRoles } from "../farmMember/farmMember.constants.js";
 import { FarmMemberModel } from "../farmMember/farmMember.model.js";
+import { escapeRegex } from "../feedRecord/feedRecord.utils.js";
 import { MAX_MESSAGE_LENGTH, NotificationStatuses } from "./notification.constants.js";
 import type { TNotificationEvent, TNotificationReferenceType } from "./notification.constants.js";
 import type { TNotification } from "./notification.interface.js";
@@ -63,7 +64,7 @@ const insertFor = async (
   farmId: Types.ObjectId,
   userId: Types.ObjectId,
   event: TNotificationEvent,
-  referenceId: Types.ObjectId,
+  referenceId: Types.ObjectId | null,
   content: TContent,
 ): Promise<void> => {
   const { title, type, priority, referenceType } = event;
@@ -143,6 +144,47 @@ export const raise = async (
   }
 };
 
+/** Rows of a record without a reference type (Device): the message starts with `fact`. */
+export const factFilter = (farmId: Types.ObjectId, event: TNotificationEvent, fact: string): QueryFilter<TNotification> => ({
+  farmId,
+  referenceType: event.referenceType,
+  referenceId: null,
+  //an announcement may use the same title, but never this type
+  type: event.type,
+  title: event.title,
+  message: { $regex: `^${escapeRegex(fact)}` },
+});
+
+/**
+ * Event without a reference id, so without the unique index: call it from a job only (its lock
+ * stops parallel runs). Each recipient is told once per `fact`, in any status.
+ */
+export const raiseFact = async (
+  audience: TAudience,
+  event: TNotificationEvent,
+  fact: string,
+  content: { details: string; expiresAt?: Date },
+): Promise<void> => {
+  const rows = await NotificationModel.find(factFilter(audience.farmId, event, fact)).select("userId").lean();
+  const told = new Set(rows.map((row) => String(row.userId)));
+  for (const userId of recipientsOf(audience, event.roles)) {
+    if (told.has(String(userId))) continue;
+    await insertFor(audience.farmId, userId, event, null, {
+      message: `${fact} ${content.details}`,
+      expiresAt: content.expiresAt ?? null,
+    });
+  }
+};
+
+const reopenRow = async (id: Types.ObjectId, message: string): Promise<void> => {
+  const row = await NotificationModel.findOneAndUpdate(
+    { _id: id, status: EXPIRED },
+    { $set: { status: ACTIVE, isRead: false, readAt: null, message: message.slice(0, MAX_MESSAGE_LENGTH) } },
+    { returnDocument: "after" },
+  );
+  if (row) emitCreated(row);
+};
+
 export type TDue = {
   referenceId: Types.ObjectId;
   event: TNotificationEvent;
@@ -156,7 +198,8 @@ export type TDue = {
  * Timed reminders. `dues` is the complete current state of `events` (inside `scope` when given):
  * open rows that no longer match it expire, and each recipient is told once per record, stage
  * and due date. A row counts as "already told" in any status while its expiry matches the
- * current due date, so a rescheduled record is announced again.
+ * current due date, so a rescheduled record is announced again. An expired row whose own expiry
+ * is still ahead was closed early (record closed or moved): it comes back when the due does.
  */
 export const syncTimed = async (
   farmId: Types.ObjectId,
@@ -183,9 +226,14 @@ export const syncTimed = async (
     row.expiresAt?.getTime() === due.expiresAt.getTime();
 
   const told = new Set<string>();
+  const closedEarly = new Map<string, (typeof rows)[number]>();
   const stale: Types.ObjectId[] = [];
   for (const row of rows) {
-    if (covers(dueOf.get(String(row.referenceId)), row)) told.add(`${row.referenceId}:${row.userId}`);
+    const key = `${row.referenceId}:${row.userId}`;
+    if (covers(dueOf.get(String(row.referenceId)), row)) {
+      if (row.status === EXPIRED) closedEarly.set(key, row);
+      else told.add(key);
+    }
     else if (row.status === ACTIVE) stale.push(row._id);
   }
   //before the inserts: an open row of the old date would block the new one
@@ -195,7 +243,11 @@ export const syncTimed = async (
   for (const due of dueOf.values()) {
     if (due.expiresAt.getTime() <= Date.now()) continue;
     for (const userId of recipientsOf(audience, due.event.roles)) {
-      if (!told.has(`${due.referenceId}:${userId}`)) await insertFor(farmId, userId, due.event, due.referenceId, due);
+      const key = `${due.referenceId}:${userId}`;
+      if (told.has(key)) continue;
+      const closed = closedEarly.get(key);
+      if (!closed) await insertFor(farmId, userId, due.event, due.referenceId, due);
+      else await reopenRow(closed._id, due.message);
     }
   }
 };

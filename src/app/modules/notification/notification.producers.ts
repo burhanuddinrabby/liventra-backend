@@ -3,9 +3,13 @@ import { AnimalLifeStatuses } from "../animal/animal.constants.js";
 import { AnimalModel } from "../animal/animal.model.js";
 import { PregnancyResults } from "../breeding/breeding.constants.js";
 import { BreedingModel } from "../breeding/breeding.model.js";
+import { ConnectionStatuses } from "../device/device.constants.js";
+import type { TDevice } from "../device/device.interface.js";
+import { DeviceModel } from "../device/device.model.js";
 import { DiseaseModel } from "../disease/disease.model.js";
 import { ACTIVE_RECOMMENDATION_STATUSES } from "../feedRecommendation/feedRecommendation.constants.js";
 import { FeedRecommendationModel } from "../feedRecommendation/feedRecommendation.model.js";
+import { escapeRegex } from "../feedRecord/feedRecord.utils.js";
 import { InventoryStatuses } from "../inventory/inventory.constants.js";
 import { InventoryModel } from "../inventory/inventory.model.js";
 import { daysUntilExpiry, deriveInventoryStatus } from "../inventory/inventory.utils.js";
@@ -28,7 +32,7 @@ import {
   OVERDUE_KEEP_DAYS,
 } from "./notification.constants.js";
 import type { TNotificationEvent } from "./notification.constants.js";
-import { expireRows, loadAudience, raise, resolveFor, syncTimed } from "./notification.delivery.js";
+import { expireRows, factFilter, loadAudience, raise, raiseFact, resolveFor, syncTimed } from "./notification.delivery.js";
 import type { TAudience, TDue } from "./notification.delivery.js";
 import { NotificationModel } from "./notification.model.js";
 
@@ -410,6 +414,47 @@ const stockMoved = async (
 const itemDeleted = (farmId: TId, id: TId) =>
   safely("stock", () => resolveFor(farmId, Refs.INVENTORY, id, { withArchived: true }));
 
+/* ---------- devices ---------- */
+
+const deviceDetails = (device: TDevice) => `${device.company} ${device.model}, serial ${device.serialNumber}.`;
+const offlineFact = ({ deviceCode, lastSyncAt }: TDevice) =>
+  lastSyncAt
+    ? `${deviceCode} has not synced since ${lastSyncAt.toISOString().slice(0, 16).replace("T", " ")} UTC.`
+    : `${deviceCode} has never synced.`;
+const warrantyFact = (deviceCode: string, expiry: Date) => `${deviceCode} warranty ends on ${day(expiry)}.`;
+
+/** Connectivity job: once per outage (= per last sync). Errors reach the job runner. */
+const tellDeviceOffline = async (device: TDevice): Promise<void> => {
+  const audience = await loadAudience(device.farmId);
+  if (audience) await raiseFact(audience, Events.DEVICE_OFFLINE, offlineFact(device), { details: deviceDetails(device) });
+};
+
+/** Warranty job: once per expiry date. Errors reach the job runner. */
+const tellWarrantyEnding = async (device: TDevice): Promise<void> => {
+  const audience = await loadAudience(device.farmId);
+  if (!audience || !device.warrantyExpiry) return;
+  await raiseFact(audience, Events.WARRANTY_EXPIRING, warrantyFact(device.deviceCode, device.warrantyExpiry), {
+    details: deviceDetails(device),
+    expiresAt: addDays(device.warrantyExpiry, DUE_KEEP_DAYS),
+  });
+};
+
+/** A device synced, changed, was deactivated or deleted: clears what no longer holds (only the jobs tell). */
+const deviceChanged = (farmId: TId, deviceCode: string) =>
+  safely("device", async () => {
+    const device = await DeviceModel.findOne({ deviceCode, farmId, isActive: true }).lean();
+    if (device?.connectionStatus !== ConnectionStatuses.OFFLINE) {
+      await expireRows(factFilter(farmId, Events.DEVICE_OFFLINE, `${deviceCode} `), true);
+    }
+    const expiry = device?.warrantyExpiry;
+    await expireRows({
+      $and: [
+        factFilter(farmId, Events.WARRANTY_EXPIRING, `${deviceCode} `),
+        ...(expiry ? [{ message: { $not: new RegExp(`^${escapeRegex(warrantyFact(deviceCode, expiry))}`) } }] : []),
+      ],
+    });
+  });
+
 /* ---------- jobs (errors reach the job runner) ---------- */
 
 /** Open treatment / pregnancy events of animals that were sold, died or left the farm. */
@@ -470,6 +515,9 @@ export const NotificationProducers = {
   stockChanged,
   stockMoved,
   itemDeleted,
+  deviceChanged,
+  tellDeviceOffline,
+  tellWarrantyEnding,
   remindFarm,
   sweepFarmStock,
   expireDue,

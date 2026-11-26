@@ -42,7 +42,7 @@ export type TNotificationEvent = {
 const { OWNER, MANAGER, WORKER, VETERINARIAN } = FarmMemberRoles;
 const { REMINDER, ALERT, WARNING, SUCCESS } = NotificationTypes;
 const { MEDIUM, HIGH, CRITICAL } = NotificationPriorities;
-const { ANIMAL, FEED_RECOMMENDATION, VACCINATION, TREATMENT, INVENTORY, PREGNANCY } = NotificationReferenceTypes;
+const { ANIMAL, FEED_RECOMMENDATION, VACCINATION, TREATMENT, INVENTORY, PREGNANCY, MANUAL } = NotificationReferenceTypes;
 
 const define = (
   title: string,
@@ -74,6 +74,9 @@ export const NotificationEvents = {
   ITEM_EXPIRING_SOON: define("Item Expiring Soon", WARNING, MEDIUM, INVENTORY, STOCK),
   ITEM_EXPIRING_THIS_WEEK: define("Item Expiring This Week", WARNING, HIGH, INVENTORY, STOCK),
   ITEM_EXPIRED: define("Item Expired", WARNING, HIGH, INVENTORY, STOCK),
+  //no Device reference type in the schema: the message starts with the device code
+  DEVICE_OFFLINE: define("Device Offline", WARNING, HIGH, MANUAL, STOCK),
+  WARRANTY_EXPIRING: define("Warranty Expiring", WARNING, MEDIUM, MANUAL, STOCK),
 } as const;
 
 //days before the due day a stage starts
