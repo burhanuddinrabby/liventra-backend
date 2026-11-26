@@ -4,9 +4,10 @@ import type { ClientSession } from "mongoose";
 import AppError from "../../errors/AppError.js";
 import { AnimalLifeStatuses } from "../animal/animal.constants.js";
 import { AnimalModel } from "../animal/animal.model.js";
+import { closeAssignmentsForAnimal } from "../deviceAssignment/deviceAssignment.utils.js";
 import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditLog.constants.js";
 import { recordAuditLog } from "../auditLog/auditLog.utils.js";
-import type { TAuditContext } from "../auditLog/auditLog.utils.js";
+import type { TAuditContext, TRecordAuditInput } from "../auditLog/auditLog.utils.js";
 import { BreedingModel } from "../breeding/breeding.model.js";
 import { escapeRegex, executeAtomically, isBlank, parseBoolean, parseEnum, parseNumber } from "../feedRecord/feedRecord.utils.js";
 import type { TPayload, TUndo } from "../feedRecord/feedRecord.utils.js";
@@ -487,7 +488,10 @@ const createAnimalSale = async (farmId: string, requester: string, body: TPayloa
     referenceId: animal._id,
     createdBy: memberId,
   };
+  //plan 6 §6.3: a sold animal's devices are released in the same unit of work
+  let releasedAudits: TRecordAuditInput[] = [];
   const created = await executeAtomically(async (session, undo) => {
+    releasedAudits = [];
     //conditional write first: it both guards the status and serializes concurrent sales
     const result = await AnimalModel.updateOne(
       { _id: animal._id, farmId: access.farmObjectId, lifeStatus: expected, ...(backfill ? {} : { isActive: true }) },
@@ -503,6 +507,13 @@ const createAnimalSale = async (farmId: string, requester: string, body: TPayloa
       undo.push(() =>
         AnimalModel.updateOne({ _id: animal._id }, { $set: { lifeStatus: animal.lifeStatus, isActive: animal.isActive } }),
       );
+      releasedAudits = (
+        await closeAssignmentsForAnimal(
+          { animalId: animal._id, lifeStatus: AnimalLifeStatuses.SOLD, removedBy: access.userObjectId, context },
+          session,
+          undo,
+        )
+      ).audits;
     }
     const existing = await IncomeModel.findOne({
       farmId: access.farmObjectId,
@@ -532,6 +543,7 @@ const createAnimalSale = async (farmId: string, requester: string, body: TPayloa
       newData: { lifeStatus: AnimalLifeStatuses.SOLD, isActive: false },
       changedFields: ["lifeStatus", "isActive"],
       });
+      for (const entry of releasedAudits) await recordAuditLog(entry);
     },
   });
   return IncomeLedger.detailById(access.farmObjectId, created._id);

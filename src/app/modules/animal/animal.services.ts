@@ -8,7 +8,10 @@ import { AuditActions, AuditEntityTypes, AuditModules } from "../auditLog/auditL
 import type { TAuditAction } from "../auditLog/auditLog.interface.js";
 import { diffForAudit } from "../auditLog/auditLog.sanitize.js";
 import { recordAuditLog } from "../auditLog/auditLog.utils.js";
-import type { TAuditContext } from "../auditLog/auditLog.utils.js";
+import type { TAuditContext, TRecordAuditInput } from "../auditLog/auditLog.utils.js";
+import { closeAssignmentsForAnimal } from "../deviceAssignment/deviceAssignment.utils.js";
+import type { TReleasedDevice } from "../deviceAssignment/deviceAssignment.utils.js";
+import { executeAtomically } from "../feedRecord/feedRecord.utils.js";
 import { BreedModel } from "../breed/breed.model.js";
 import { FarmModel } from "../farm/farm.model.js";
 import { FarmStatuses } from "../farm/farm.constants.js";
@@ -514,6 +517,75 @@ const applyAnimalUpdate = async (
   const updated = await loadAnimalDetail(animal._id);
   if (!updated) throw new AppError(status.NOT_FOUND, "Animal not found!");
   return toAnimalResponse(updated, access.canViewFinancials);
+};
+
+/**
+ * Moves an animal to another lifeStatus. Leaving Active also closes its device assignments
+ * (plan 6 §6.3) in the same unit of work; the response lists the released devices.
+ * The write is conditional on the status that was read, so two changes never overwrite each other.
+ */
+const applyLifeStatusChange = async (
+  animal: TAnimalDoc,
+  access: TAnimalAccess,
+  set: TPayload & { lifeStatus: TAnimalLifeStatus; isActive: boolean },
+  auditing: TAnimalAudit,
+) => {
+  const before = animal.toObject() as unknown as TPayload;
+  const fields = Object.keys(set);
+  const changes = diffForAudit(
+    Object.fromEntries(fields.map((field) => [field, before[field] ?? null])),
+    Object.fromEntries(fields.map((field) => [field, set[field] ?? null])),
+  );
+  let released: TReleasedDevice[] = [];
+  let audits: TRecordAuditInput[] = [];
+  const animalAudit: TRecordAuditInput = {
+    context: auditing.context,
+    farmId: access.farmObjectId,
+    entityType: AuditEntityTypes.ANIMAL,
+    entityId: animal._id,
+    action: auditing.action ?? AuditActions.UPDATE,
+    module: AuditModules.ANIMAL,
+    event: auditing.event,
+    oldData: changes.oldData,
+    newData: changes.newData,
+    changedFields: changes.changedFields,
+  };
+
+  await executeAtomically(
+    async (session, undo) => {
+      const opts = session ? { session } : {};
+      const result = await AnimalModel.updateOne(
+        { _id: animal._id, farmId: access.farmObjectId, lifeStatus: animal.lifeStatus },
+        { $set: { ...set, updatedBy: access.userObjectId } },
+        { runValidators: true, ...opts },
+      );
+      if (!result.matchedCount) {
+        throw new AppError(status.CONFLICT, `${animal.animalCode} was changed by someone else. Reload and try again.`);
+      }
+      undo.push(() =>
+        AnimalModel.updateOne(
+          { _id: animal._id },
+          { $set: Object.fromEntries(fields.map((field) => [field, before[field] ?? null])) },
+        ),
+      );
+      ({ released, audits } = await closeAssignmentsForAnimal(
+        { animalId: animal._id, lifeStatus: set.lifeStatus, removedBy: access.userObjectId, context: auditing.context },
+        session,
+        undo,
+      ));
+    },
+    {
+      trace: animalAudit,
+      log: async () => {
+        await recordAuditLog(animalAudit);
+        for (const entry of audits) await recordAuditLog(entry);
+      },
+    },
+  );
+
+  const updated = await loadAnimalDetail(animal._id);
+  if (!updated) throw new AppError(status.NOT_FOUND, "Animal not found!");
+  return { ...toAnimalResponse(updated, access.canViewFinancials), releasedDevices: released };
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1250,21 +1322,21 @@ const updateLifecycle = async (
   }
 
   //isActive is always derived from lifeStatus — never set independently
-  const set: TPayload = {
+  const set: TPayload & { lifeStatus: TAnimalLifeStatus; isActive: boolean } = {
     lifeStatus: next,
     isActive: next === AnimalLifeStatuses.ACTIVE,
   };
   const remarks = parseText(payload.remarks);
   if (remarks) set.remarks = remarks;
 
-  // TODO(DeviceAssignment): close active IoT device assignments when leaving Active (Model 26).
-  //Sold here books no money: POST /incomes/animal-sale does both, and /incomes/reconciliation
+  //leaving Active closes the animal's device assignments (Sold / Dead / Transferred / Archived);
+  //reactivating restores none. Sold here books no money: POST /incomes/animal-sale does both, and /incomes/reconciliation
   //flags animals marked Sold without an income.
   const events: Partial<Record<TAnimalLifeStatus, string>> = {
     [AnimalLifeStatuses.ACTIVE]: "Animal Reactivated",
     [AnimalLifeStatuses.DEAD]: "Animal Marked Dead",
   };
-  return applyAnimalUpdate(animal, access, set, [], {
+  return applyLifeStatusChange(animal, access, set, {
     context,
     event: events[next] ?? `Animal ${next}`,
     action: next === AnimalLifeStatuses.ARCHIVED ? AuditActions.ARCHIVE : AuditActions.UPDATE,
@@ -1337,11 +1409,11 @@ const archiveAnimal = async (
     );
   }
 
-  return applyAnimalUpdate(
+  //closes the animal's device assignments too (Manual Removal + remark)
+  return applyLifeStatusChange(
     animal,
     access,
     { lifeStatus: AnimalLifeStatuses.ARCHIVED, isActive: false },
-    [],
     { context, event: "Animal Archived", action: AuditActions.ARCHIVE },
   );
 };

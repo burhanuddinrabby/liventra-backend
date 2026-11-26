@@ -48,10 +48,12 @@ import {
   WarrantyStates,
 } from "./device.constants.js";
 import type { TDevice, TDeviceDoc } from "./device.interface.js";
+import { MANUAL_REMOVAL_REASONS } from "../deviceAssignment/deviceAssignment.constants.js";
+import type { TRemovalReason } from "../deviceAssignment/deviceAssignment.interface.js";
+import { closeDeviceAssignment } from "../deviceAssignment/deviceAssignment.utils.js";
 import {
   activeAssignmentsOf,
   assignedDeviceIds,
-  closeActiveAssignment,
   countDeviceHistory,
   hasActiveAssignment,
   latestReadingOf,
@@ -596,12 +598,20 @@ const deactivate = async (farmId: string, requester: string, ref: string, contex
   const before = await findDevice(access, ref);
   if (!before.isActive) throw conflict("This device is already inactive!");
   const reason = parseReason(body.reason);
+  //Animal Sold / Animal Dead belong to the animal life cycle
   const removalReason = isBlank(body.removalReason)
     ? null
-    : (parseEnum("removalReason", body.removalReason, RemovalReasons) as (typeof RemovalReasons)[number]);
+    : (parseEnum("removalReason", body.removalReason, MANUAL_REMOVAL_REASONS) as TRemovalReason);
 
+  const steps = auditing(access, context, before._id, AuditActions.ARCHIVE, "Device Deactivated", {
+    oldData: { isActive: true, connectionStatus: before.connectionStatus },
+    newData: { isActive: false, connectionStatus: DISCONNECTED, reason, ...(removalReason ? { removalReason } : {}) },
+    changedFields: ["isActive", "connectionStatus"],
+  });
+  let released: TRecordAuditInput | null = null;
   await executeAtomically(
     async (session, undo) => {
+      released = null;
       const assigned = await hasActiveAssignment(before._id, session);
       if (assigned && !removalReason) {
         throw conflict("This device is assigned to an animal: choose a removal reason to release it!");
@@ -613,14 +623,28 @@ const deactivate = async (farmId: string, requester: string, ref: string, contex
         undo,
       );
       if (assigned && removalReason) {
-        undo.push(await closeActiveAssignment(before._id, removalReason, access.user._id, session));
+        //the assignment module's removal workflow, in this unit of work
+        released = await closeDeviceAssignment(
+          before._id,
+          {
+            removalReason,
+            removedBy: access.user._id,
+            remarks: `Device deactivated: ${reason}`,
+            context,
+            event: "Device Removed (Device Deactivated)",
+          },
+          session,
+          undo,
+        );
       }
     },
-    auditing(access, context, before._id, AuditActions.ARCHIVE, "Device Deactivated", {
-      oldData: { isActive: true, connectionStatus: before.connectionStatus },
-      newData: { isActive: false, connectionStatus: DISCONNECTED, reason, ...(removalReason ? { removalReason } : {}) },
-      changedFields: ["isActive", "connectionStatus"],
-    }),
+    {
+      trace: steps.trace,
+      log: async () => {
+        await steps.log();
+        if (released) await recordAuditLog(released);
+      },
+    },
   );
   await NotificationProducers.deviceChanged(access.farm._id, before.deviceCode);
   return detail(access, before._id);

@@ -22,6 +22,7 @@ import { inventoryRouter, inventoryTransactionRouter } from "../inventory/invent
 import { auditLogRouter } from "../auditLog/auditLog.route.js";
 import { farmNotificationRouter } from "../notification/notification.route.js";
 import { deviceRouter } from "../device/device.route.js";
+import { animalDeviceRouter, deviceAssignmentRouter } from "../deviceAssignment/deviceAssignment.route.js";
 import { expenseRouter } from "../expense/expense.route.js";
 import { financeRouter, incomeRouter } from "../income/income.route.js";
 
@@ -104,6 +105,9 @@ farmRouter.use("/:farmId/inventory-transactions", inventoryTransactionRouter);
 farmRouter.use("/:farmId/audit-logs", auditLogRouter);
 farmRouter.use("/:farmId/notifications", farmNotificationRouter);
 farmRouter.use("/:farmId/devices", deviceRouter);
+// DeviceAssignment (Model 26); the animal's devices are mounted before the animal router so they are matched first
+farmRouter.use("/:farmId/device-assignments", deviceAssignmentRouter);
+farmRouter.use("/:farmId/animals/:animalId/devices", animalDeviceRouter);
 //finance: expenses, incomes and the profit / loss report
 farmRouter.use("/:farmId/expenses", expenseRouter);
 farmRouter.use("/:farmId/incomes", incomeRouter);

@@ -2,6 +2,7 @@ import express from "express";
 import auth from "../../middlewares/auth.js";
 import validateRequest from "../../middlewares/validateRequest.js";
 import { SystemRoles } from "../auth/auth.constants.js";
+import { DeviceAssignmentController } from "../deviceAssignment/deviceAssignment.controller.js";
 import { DeviceController } from "./device.controller.js";
 import { deviceValidations } from "./device.validation.js";
 
@@ -18,6 +19,8 @@ deviceRouter.get("/meta", member, DeviceController.getMeta);
 deviceRouter.get("/lookup", member, DeviceController.lookup);
 deviceRouter.get("/:id", member, DeviceController.getDevice);
 deviceRouter.get("/:id/audit-logs", member, DeviceController.getAuditLogs);
+//assignment history of one device (plan 6)
+deviceRouter.get("/:id/assignments", member, DeviceAssignmentController.getDeviceAssignments);
 deviceRouter.put("/:id", member, validateRequest(deviceValidations.updateValidation), DeviceController.updateDevice);
 deviceRouter.patch("/:id/status", member, validateRequest(deviceValidations.statusValidation), DeviceController.changeStatus);
 deviceRouter.patch(

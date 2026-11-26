@@ -1,77 +1,102 @@
 /*
- * HOOKS for DeviceAssignment (plan 6) and SensorData (plan 7). Neither model exists yet, so this
- * file is the only place that touches their collections (raw, like milkRecord.utils.ts):
- * empty today, and already correct once the rows appear.
- * Plan 6: replace the assignment functions with the model / service (closeActiveAssignment must
- *   become its removal workflow) and add assignment audit rows.
- * Plan 7: replace the reading functions and call recordDeviceSync() from the ingestion pipeline.
+ * Links between a device and the records that point at it.
+ * - Assignments (plan 6): read through DeviceAssignmentModel. Closing one is the assignment
+ *   module's removal workflow (`closeDeviceAssignment` in deviceAssignment.utils.ts).
+ * - Readings (plan 7): SensorData does not exist yet. The functions marked "PLAN 7 HOOK" are the
+ *   only code that touches its collection (raw, like milkRecord.utils.ts): empty today, already
+ *   correct once rows appear. Plan 7 replaces them with the model and calls recordDeviceSync()
+ *   from the ingestion pipeline.
  */
 import mongoose from "mongoose";
 import type { ClientSession, Types } from "mongoose";
 import { NotificationProducers } from "../notification/notification.producers.js";
+import { AssignmentStatuses } from "../deviceAssignment/deviceAssignment.constants.js";
+import { DeviceAssignmentModel } from "../deviceAssignment/deviceAssignment.model.js";
 import { BatteryTypes, ConnectionStatuses } from "./device.constants.js";
-import type { RemovalReasons } from "./device.constants.js";
 import { DeviceModel } from "./device.model.js";
 
 type TId = Types.ObjectId;
 
-//names Mongoose derives from the models "DeviceAssignment" and "SensorData"
-const assignments = () => mongoose.connection.collection("deviceassignments");
+//name Mongoose will derive from the model "SensorData" (plan 7)
 const readings = () => mongoose.connection.collection("sensordatas");
 const withSession = (session: ClientSession | null) => (session ? { session } : {});
 
-export type TCurrentAssignment = { _id: TId; assignmentNo: string; deviceId: TId; animalId: TId; assignedDate: Date };
+const ANIMAL_FIELDS = "animalCode name tagNumber lifeStatus";
 
-/** deviceId → open assignment. */
+export type TCurrentAssignment = {
+  _id: TId;
+  assignmentNo: string;
+  deviceId: TId;
+  animalId: TId;
+  assignedDate: Date;
+  assignmentReason: string;
+  animal: { _id: TId; animalCode: string; name?: string | null; tagNumber?: string | null; lifeStatus: string } | null;
+};
+
+/** deviceId → open assignment, with the animal it is on. */
 export const activeAssignmentsOf = async (farmId: TId, deviceIds: TId[]): Promise<Map<string, TCurrentAssignment>> => {
   if (!deviceIds.length) return new Map();
-  const rows = (await assignments()
-    .find({ farmId, deviceId: { $in: deviceIds }, status: "Active" })
-    .project({ assignmentNo: 1, deviceId: 1, animalId: 1, assignedDate: 1 })
-    .toArray()) as TCurrentAssignment[];
-  return new Map(rows.map((row) => [String(row.deviceId), row]));
+  const rows = await DeviceAssignmentModel.find({ farmId, deviceId: { $in: deviceIds }, status: AssignmentStatuses.ACTIVE })
+    .select("assignmentNo deviceId animalId assignedDate assignmentReason")
+    .populate<{ animalId: TCurrentAssignment["animal"] }>("animalId", ANIMAL_FIELDS)
+    .lean();
+  return new Map(
+    rows.map((row) => {
+      const animal = row.animalId;
+      return [
+        String(row.deviceId),
+        {
+          _id: row._id,
+          assignmentNo: row.assignmentNo,
+          deviceId: row.deviceId,
+          animalId: animal?._id as TId,
+          assignedDate: row.assignedDate,
+          assignmentReason: row.assignmentReason,
+          animal,
+        },
+      ];
+    }),
+  );
 };
 
 export const assignedDeviceIds = async (farmId: TId): Promise<TId[]> =>
-  (await assignments().distinct("deviceId", { farmId, status: "Active" })) as TId[];
+  DeviceAssignmentModel.distinct("deviceId", { farmId, status: AssignmentStatuses.ACTIVE });
 
 export const hasActiveAssignment = async (deviceId: TId, session: ClientSession | null): Promise<boolean> =>
-  (await assignments().findOne({ deviceId, status: "Active" }, withSession(session))) !== null;
+  (await DeviceAssignmentModel.exists({ deviceId, status: AssignmentStatuses.ACTIVE }).session(session)) !== null;
 
-/** Any assignment (closed ones too) or reading: identity is locked and the device cannot be deleted. */
+/** Any assignment (closed and cancelled ones too) or reading: identity is locked and the device cannot be deleted. */
 export const countDeviceHistory = async (deviceId: TId, session: ClientSession | null = null) => ({
-  assignments: await assignments().countDocuments({ deviceId }, withSession(session)),
-  readings: await readings().countDocuments({ deviceId }, withSession(session)),
+  assignments: await DeviceAssignmentModel.countDocuments({ deviceId }).session(session),
+  readings: await countReadingsOfDevice(deviceId, session),
 });
 
-/** Newest reading, without the raw vendor payload (Owner only, plan 7). */
+/* ---------- PLAN 7 HOOKS (SensorData) ---------- */
+
+/** PLAN 7 HOOK: readings sent by one device. */
+export const countReadingsOfDevice = (deviceId: TId, session: ClientSession | null = null) =>
+  readings().countDocuments({ deviceId }, withSession(session));
+
+/** PLAN 7 HOOK: newest reading, without the raw vendor payload (Owner only). */
 export const latestReadingOf = (deviceId: TId) =>
   readings().findOne(
     { deviceId },
     { sort: { recordedAt: -1 }, projection: { recordedAt: 1, metrics: 1, alerts: 1, source: 1 } },
   );
 
-/** Closes the open assignment in the caller's unit of work. Returns its undo step (standalone MongoDB). */
-export const closeActiveAssignment = async (
-  deviceId: TId,
-  reason: (typeof RemovalReasons)[number],
-  removedBy: TId,
-  session: ClientSession | null,
-): Promise<() => Promise<unknown>> => {
-  const now = new Date();
-  const row = await assignments().findOneAndUpdate(
-    { deviceId, status: "Active" },
-    { $set: { status: "Removed", removedDate: now, removalReason: reason, removedBy, updatedAt: now } },
-    { ...withSession(session), returnDocument: "before" },
-  );
-  return async () => {
-    if (!row) return;
-    const { removedDate = null, removalReason = null, removedBy: previous = null, updatedAt = now } = row;
-    await assignments().updateOne(
-      { _id: row._id },
-      { $set: { status: "Active", removedDate, removalReason, removedBy: previous, updatedAt } },
-    );
-  };
+/**
+ * PLAN 7 HOOK: readings stored under one assignment. Decides two plan 6 rules:
+ * an assignment with a reading cannot be cancelled, and it cannot be removed before `lastRecordedAt`.
+ */
+export const readingsOfAssignment = async (
+  assignmentId: TId,
+  session: ClientSession | null = null,
+): Promise<{ count: number; lastRecordedAt: Date | null }> => {
+  const [count, last] = await Promise.all([
+    readings().countDocuments({ assignmentId }, withSession(session)),
+    readings().findOne({ assignmentId }, { ...withSession(session), sort: { recordedAt: -1 }, projection: { recordedAt: 1 } }),
+  ]);
+  return { count, lastRecordedAt: (last?.recordedAt as Date | undefined) ?? null };
 };
 
 /**

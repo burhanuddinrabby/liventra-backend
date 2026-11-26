@@ -68,7 +68,7 @@ const deviceCounterSchema = new Schema<TDeviceCounter>(
   { versionKey: false },
 );
 
-const DeviceCounterModel = model<TDeviceCounter>("DeviceCounter", deviceCounterSchema);
+export const DeviceCounterModel = model<TDeviceCounter>("DeviceCounter", deviceCounterSchema);
 
 /** DEV-000001 (atomic, never inside a transaction; gaps are harmless). */
 export const generateDeviceCode = async (): Promise<string> => {

@@ -13,9 +13,10 @@ Read: Owner, Manager, Veterinarian, Worker. A superAdmin acts as Owner. Writes n
 | GET | `/:id` | read | + `notes`, `latestReading`, `usage`, `identityLocked` |
 | PUT | `/:id` | Owner, Manager | partial; `null` clears; `{ mode: updated or unchanged, changedFields, device }` |
 | PATCH | `/:id/status` | Owner, Manager | `{ connectionStatus?, healthStatus?, reason }` |
-| PATCH | `/:id/deactivate` | Owner | `{ reason, removalReason? }` |
+| PATCH | `/:id/deactivate` | Owner | `{ reason, removalReason? }` (manual reasons only) |
 | PATCH | `/:id/reactivate` | Owner | becomes Offline |
-| DELETE | `/:id` | Owner | 409 once it had an assignment or a reading |
+| DELETE | `/:id` | Owner | 409 once it had any assignment row (Cancelled included) or a reading |
+| GET | `/:id/assignments` | read | assignment history, newest first (see `deviceAssignment.md`) |
 | GET | `/:id/audit-logs` | Owner, Manager | newest first |
 
 ## Body
@@ -33,8 +34,10 @@ unknown or server-managed fields = 400. Enum values are listed by `/meta`.
 - `connectionStatus`: Online (set by a sync only), Offline (no sync for 24 h), Disconnected, Maintenance. A user may set
   the last three; Online → Offline by a user = 409. Maintenance survives syncs and the job.
 - `healthStatus`: Healthy, Warning, Critical, Faulty. The connectivity job never changes it.
-- Deactivating sets Disconnected. An assigned device needs `removalReason` (409), which closes the assignment. An
-  inactive device cannot be changed (409).
+- Deactivating sets Disconnected. An assigned device needs `removalReason` (409), which closes the assignment in the
+  same transaction (remark `Device deactivated: <reason>`). Only the manual reasons are accepted (Maintenance, Battery
+  Failure, Device Fault, Replacement, Lost, Manual Removal); Animal Sold / Animal Dead = 400. An inactive device cannot
+  be changed (409).
 
 ## List
 Filters `deviceType`, `communicationProtocol`, `connectionStatus`, `healthStatus` (comma lists), `isActive`
@@ -43,9 +46,11 @@ Filters `deviceType`, `communicationProtocol`, `connectionStatus`, `healthStatus
 descending), `page`, `limit` (20, max 100). Unknown values = 400.
 
 Derived per row: `warrantyState` (Active, Expiring ≤ 30 days, Expired, Unknown), `warrantyDaysLeft`, `batteryState`
-(Critical ≤ 10, Low ≤ 20, Normal, Unknown), `currentAssignment`.
+(Critical ≤ 10, Low ≤ 20, Normal, Unknown), `currentAssignment` (`_id`, `assignmentNo`, `animalId`, `assignedDate`,
+`assignmentReason`, `animal { _id, animalCode, name, tagNumber, lifeStatus }`, or `null`).
 
 ## Jobs and hooks
 `device.connectivity` (hourly) and `device.warranty` (daily) need `JOBS_ENABLED=true`; see `notification.md`.
-`device.links.ts` holds the hooks for DeviceAssignment (plan 6) and SensorData (plan 7). Until then `currentAssignment`
-and `latestReading` are `null` and `recordDeviceSync()` has no caller.
+`device.links.ts` reads DeviceAssignment through its model (current assignment, assigned/free filter, history count)
+and still holds the SensorData hooks (plan 7): until then `latestReading` is `null`, reading counts are 0 and
+`recordDeviceSync()` has no caller.
