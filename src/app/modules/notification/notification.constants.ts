@@ -42,7 +42,8 @@ export type TNotificationEvent = {
 const { OWNER, MANAGER, WORKER, VETERINARIAN } = FarmMemberRoles;
 const { REMINDER, ALERT, WARNING, SUCCESS } = NotificationTypes;
 const { MEDIUM, HIGH, CRITICAL } = NotificationPriorities;
-const { ANIMAL, FEED_RECOMMENDATION, VACCINATION, TREATMENT, INVENTORY, PREGNANCY, MANUAL } = NotificationReferenceTypes;
+const { ANIMAL, FEED_RECOMMENDATION, VACCINATION, TREATMENT, INVENTORY, PREGNANCY, SENSOR_DATA, MANUAL } =
+  NotificationReferenceTypes;
 
 const define = (
   title: string,
@@ -77,6 +78,15 @@ export const NotificationEvents = {
   //no Device reference type in the schema: the message starts with the device code
   DEVICE_OFFLINE: define("Device Offline", WARNING, HIGH, MANUAL, STOCK),
   WARRANTY_EXPIRING: define("Warranty Expiring", WARNING, MEDIUM, MANUAL, STOCK),
+  //sensor readings (plan 7): observations, not a diagnosis; the message starts with the animal code
+  SENSOR_BATTERY_LOW: define("Sensor Battery Low", WARNING, MEDIUM, SENSOR_DATA, STOCK),
+  SENSOR_BATTERY_CRITICAL: define("Sensor Battery Critical", WARNING, HIGH, SENSOR_DATA, STOCK),
+  SENSOR_ALERT_HIGH: define("Sensor Alert", ALERT, HIGH, SENSOR_DATA, CLINICAL),
+  SENSOR_ALERT_CRITICAL: define("Sensor Alert Critical", ALERT, CRITICAL, SENSOR_DATA, CLINICAL),
+  //report generation (plan 8): a one-off message to the requester only; no Report
+  //reference type in the schema, so these use Manual and the message holds the reportNo
+  REPORT_READY: define("Report Ready", SUCCESS, MEDIUM, MANUAL, [OWNER, MANAGER, WORKER, VETERINARIAN]),
+  REPORT_FAILED: define("Report Failed", WARNING, HIGH, MANUAL, [OWNER, MANAGER, WORKER, VETERINARIAN]),
 } as const;
 
 //days before the due day a stage starts
@@ -91,6 +101,8 @@ export const LeadDays = {
   EXPIRY_NEAR: 7,
 } as const;
 export const DUE_KEEP_DAYS = 1;
+//a sensor notification is about a moment: it expires after this many days
+export const SENSOR_KEEP_DAYS = 3;
 export const OVERDUE_KEEP_DAYS = 30;
 
 export const NOTIFICATION_NO_PREFIX = "NOT";

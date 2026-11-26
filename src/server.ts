@@ -8,6 +8,7 @@ import seedSuperAdmin from "./app/DB/index.js";
 import { initRealtime } from "./app/realtime/realtime.js";
 import { startJobs } from "./app/jobs/scheduler.js";
 import { FarmMemberServices } from "./app/modules/farmMember/farmMember.service.js";
+import { startReportWorker } from "./app/modules/report/report.worker.js";
 
 let server: Server;
 
@@ -30,6 +31,12 @@ async function main() {
     });
     initRealtime(server);
     startJobs();
+
+    //report worker: recover reports left Generating by a crash (fail them, remove half
+    //files) and resume the in-process queue. Runs regardless of JOBS_ENABLED.
+    startReportWorker().catch((error: unknown) => {
+        console.log("Report worker start failed!", error);
+    });
 }
 main().catch(err => console.log(err));
 

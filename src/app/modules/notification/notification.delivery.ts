@@ -87,6 +87,18 @@ const insertFor = async (
   }
 };
 
+/**
+ * Delivers one notification to a single named user (not an audience). Used for one-off,
+ * personal events such as Report Ready / Report Failed, which go only to the requester.
+ * Never throws; "already told" duplicate keys are swallowed by insertFor.
+ */
+export const notifyUser = (
+  farmId: Types.ObjectId,
+  userId: Types.ObjectId,
+  event: TNotificationEvent,
+  content: TContent,
+): Promise<void> => insertFor(farmId, userId, event, null, content);
+
 /** Moves matching rows to Expired. Archived rows are included only where asked. */
 export const expireRows = async (filter: QueryFilter<TNotification>, withArchived = false): Promise<void> => {
   const wanted = withArchived ? [ACTIVE, ARCHIVED] : [ACTIVE];

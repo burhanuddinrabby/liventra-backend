@@ -3,6 +3,7 @@ import { isValidObjectId } from "mongoose";
 import type { Model, Types } from "mongoose";
 import { DeviceModel } from "../device/device.model.js";
 import { DeviceAssignmentModel } from "../deviceAssignment/deviceAssignment.model.js";
+import { SensorDataModel } from "../sensorData/sensorData.model.js";
 import { NotificationModel } from "../notification/notification.model.js";
 import AppError from "../../errors/AppError.js";
 import { UserModel } from "../auth/auth.model.js";
@@ -29,6 +30,8 @@ import { PregnancyModel } from "../pregnancy/pregnancy.model.js";
 import { InventoryModel, InventoryTransactionModel } from "../inventory/inventory.model.js";
 import { ExpenseModel } from "../expense/expense.model.js";
 import { IncomeModel } from "../income/income.model.js";
+import { ReportJobModel, ReportModel } from "../report/report.model.js";
+import { removeFarmReports } from "../report/report.storage.js";
 import { removeFarmAttachments } from "../finance/finance.utils.js";
 import { closeFarmRooms, removeUserFromFarm } from "../../realtime/realtime.js";
 import { recordAuditLog, recordRolledBack, type TAuditContext, type TRecordAuditInput } from "../auditLog/auditLog.utils.js";
@@ -542,6 +545,8 @@ export const FarmDeleteModes = {
  * the platform's evidence trail; the deletion itself is audited.
  */
 const FARM_DATA_SOURCES = [
+  { key: "reports", model: ReportModel },
+  { key: "reportJobs", model: ReportJobModel },
   { key: "expenses", model: ExpenseModel },
   { key: "incomes", model: IncomeModel },
   { key: "feedRecords", model: FeedRecordModel },
@@ -555,6 +560,7 @@ const FARM_DATA_SOURCES = [
   { key: "inventoryTransactions", model: InventoryTransactionModel },
   { key: "inventories", model: InventoryModel },
   { key: "notifications", model: NotificationModel },
+  { key: "sensorData", model: SensorDataModel },
   { key: "deviceAssignments", model: DeviceAssignmentModel },
   { key: "devices", model: DeviceModel },
   { key: "animals", model: AnimalModel },
@@ -689,8 +695,9 @@ const deleteFarm = async (
     deleted.total += deleted[source.key];
   }
 
-  //receipt files of the deleted expenses / incomes
+  //receipt files of the deleted expenses / incomes, and the farm's report files
   await removeFarmAttachments(farm._id);
+  await removeFarmReports(farm._id);
 
   const oldData = farm.toObject() as unknown as Record<string, unknown>;
   await FarmModel.deleteOne({ _id: farm._id });

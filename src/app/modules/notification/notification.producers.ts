@@ -30,9 +30,10 @@ import {
   NotificationReferenceTypes as Refs,
   NotificationStatuses,
   OVERDUE_KEEP_DAYS,
+  SENSOR_KEEP_DAYS,
 } from "./notification.constants.js";
 import type { TNotificationEvent } from "./notification.constants.js";
-import { expireRows, factFilter, loadAudience, raise, raiseFact, resolveFor, syncTimed } from "./notification.delivery.js";
+import { expireRows, factFilter, loadAudience, notifyUser, raise, raiseFact, resolveFor, syncTimed } from "./notification.delivery.js";
 import type { TAudience, TDue } from "./notification.delivery.js";
 import { NotificationModel } from "./notification.model.js";
 
@@ -414,6 +415,95 @@ const stockMoved = async (
 const itemDeleted = (farmId: TId, id: TId) =>
   safely("stock", () => resolveFor(farmId, Refs.INVENTORY, id, { withArchived: true }));
 
+/* ---------- sensor readings (plan 7 §7.3) ---------- */
+
+export type TStoredReading = {
+  _id: TId;
+  animalId: TId;
+  recordedAt: Date;
+  alerts: { type: string; severity: string; message: string }[];
+};
+
+const SENSOR_EVERY_MS = 6 * 60 * 60 * 1000;
+const SENSOR_FRESH_MS = 24 * 60 * 60 * 1000;
+const sensorQueue = new Map<string, Promise<unknown>>();
+
+/** One check-then-insert at a time per animal + title in this process (parallel uploads). */
+const serially = (key: string, work: () => Promise<unknown>) => {
+  const next = (sensorQueue.get(key) ?? Promise.resolve()).then(work, work);
+  sensorQueue.set(key, next);
+  return next.finally(() => {
+    if (sensorQueue.get(key) === next) sensorQueue.delete(key);
+  });
+};
+
+const sensorEventOf = (alert: { type: string; severity: string }): TNotificationEvent | null => {
+  if (alert.type === "Battery") {
+    if (alert.severity === "High" || alert.severity === "Critical") return Events.SENSOR_BATTERY_CRITICAL;
+    return alert.severity === "Medium" ? Events.SENSOR_BATTERY_LOW : null;
+  }
+  if (alert.severity === "Critical") return Events.SENSOR_ALERT_CRITICAL;
+  return alert.severity === "High" ? Events.SENSOR_ALERT_HIGH : null;
+};
+
+/**
+ * Battery and High / Critical alerts of stored readings: one notification per animal + title
+ * per 6 h, and only for readings under 24 h old, so importing history cannot flood the inbox.
+ * Returns how many animal + title pairs were told. Never throws.
+ */
+const sensorReadingsStored = async (farmId: TId, readings: TStoredReading[]): Promise<number> => {
+  let told = 0;
+  await safely("sensor", async () => {
+    const now = Date.now();
+    //newest reading per animal + event
+    const wanted = new Map<string, { event: TNotificationEvent; reading: TStoredReading; alerts: string[] }>();
+    for (const reading of readings) {
+      if (reading.recordedAt.getTime() < now - SENSOR_FRESH_MS) continue;
+      for (const alert of reading.alerts) {
+        const event = sensorEventOf(alert);
+        if (!event) continue;
+        const key = `${reading.animalId}|${event.title}`;
+        const current = wanted.get(key);
+        if (!current || current.reading.recordedAt < reading.recordedAt) {
+          wanted.set(key, { event, reading, alerts: [alert.message] });
+        } else if (current.reading._id.equals(reading._id)) {
+          current.alerts.push(alert.message);
+        }
+      }
+    }
+    if (!wanted.size) return;
+    const audience = await loadAudience(farmId);
+    if (!audience) return;
+    const animals = await AnimalModel.find({ farmId, _id: { $in: [...wanted.values()].map((w) => w.reading.animalId) } })
+      .select("animalCode name")
+      .lean();
+    const label = new Map(animals.map((a) => [String(a._id), { code: a.animalCode, name: a.name ?? null }]));
+
+    for (const [key, { event, reading, alerts }] of wanted) {
+      const animal = label.get(String(reading.animalId));
+      if (!animal) continue;
+      await serially(`${farmId}|${key}`, async () => {
+        const prefix = `${animal.code}:`;
+        const recent = await NotificationModel.exists({
+          farmId,
+          referenceType: Refs.SENSOR_DATA,
+          title: event.title,
+          createdAt: { $gte: new Date(Date.now() - SENSOR_EVERY_MS) },
+          message: { $regex: `^${escapeRegex(prefix)}` },
+        });
+        if (recent) return;
+        const at = reading.recordedAt.toISOString().slice(0, 16).replace("T", " ");
+        await raise(audience, event, reading._id, {
+          message: `${prefix} ${alerts.join("; ")} at ${at} UTC${animal.name ? ` (${animal.name})` : ""}. Observation, not a diagnosis.`,
+          expiresAt: addDays(new Date(), SENSOR_KEEP_DAYS),
+        });
+        told += 1;
+      });
+    }
+  });
+  return told;
+};
+
 /* ---------- devices ---------- */
 
 const deviceDetails = (device: TDevice) => `${device.company} ${device.model}, serial ${device.serialNumber}.`;
@@ -454,6 +544,26 @@ const deviceChanged = (farmId: TId, deviceCode: string) =>
       ],
     });
   });
+
+/* ---------- reports (plan 8) ---------- */
+
+/**
+ * Report generation finished for the requester: a single personal notification (Manual,
+ * no reference id; the message carries the reportNo). Never throws.
+ */
+const reportFinished = (
+  farmId: TId,
+  userId: TId,
+  ready: boolean,
+  message: string,
+  expiresAt?: Date | null,
+) =>
+  safely("report", () =>
+    notifyUser(farmId, userId, ready ? Events.REPORT_READY : Events.REPORT_FAILED, {
+      message,
+      expiresAt: expiresAt ?? null,
+    }),
+  );
 
 /* ---------- jobs (errors reach the job runner) ---------- */
 
@@ -517,7 +627,9 @@ export const NotificationProducers = {
   itemDeleted,
   deviceChanged,
   tellDeviceOffline,
+  sensorReadingsStored,
   tellWarrantyEnding,
+  reportFinished,
   remindFarm,
   sweepFarmStock,
   expireDue,

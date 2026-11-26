@@ -2,24 +2,19 @@
  * Links between a device and the records that point at it.
  * - Assignments (plan 6): read through DeviceAssignmentModel. Closing one is the assignment
  *   module's removal workflow (`closeDeviceAssignment` in deviceAssignment.utils.ts).
- * - Readings (plan 7): SensorData does not exist yet. The functions marked "PLAN 7 HOOK" are the
- *   only code that touches its collection (raw, like milkRecord.utils.ts): empty today, already
- *   correct once rows appear. Plan 7 replaces them with the model and calls recordDeviceSync()
- *   from the ingestion pipeline.
+ * - Readings (plan 7): read through SensorDataModel. recordDeviceSync() is called by the
+ *   ingestion pipeline (sensorData.pipeline.ts) after readings are stored.
  */
-import mongoose from "mongoose";
 import type { ClientSession, Types } from "mongoose";
 import { NotificationProducers } from "../notification/notification.producers.js";
 import { AssignmentStatuses } from "../deviceAssignment/deviceAssignment.constants.js";
 import { DeviceAssignmentModel } from "../deviceAssignment/deviceAssignment.model.js";
 import { BatteryTypes, ConnectionStatuses } from "./device.constants.js";
+import { MACHINE_SOURCES } from "../sensorData/sensorData.constants.js";
+import { SensorDataModel } from "../sensorData/sensorData.model.js";
 import { DeviceModel } from "./device.model.js";
 
 type TId = Types.ObjectId;
-
-//name Mongoose will derive from the model "SensorData" (plan 7)
-const readings = () => mongoose.connection.collection("sensordatas");
-const withSession = (session: ClientSession | null) => (session ? { session } : {});
 
 const ANIMAL_FIELDS = "animalCode name tagNumber lifeStatus";
 
@@ -71,21 +66,21 @@ export const countDeviceHistory = async (deviceId: TId, session: ClientSession |
   readings: await countReadingsOfDevice(deviceId, session),
 });
 
-/* ---------- PLAN 7 HOOKS (SensorData) ---------- */
+/* ---------- readings (SensorData, plan 7) ---------- */
 
-/** PLAN 7 HOOK: readings sent by one device. */
+/** Readings sent by one device. */
 export const countReadingsOfDevice = (deviceId: TId, session: ClientSession | null = null) =>
-  readings().countDocuments({ deviceId }, withSession(session));
+  SensorDataModel.countDocuments({ deviceId }).session(session);
 
-/** PLAN 7 HOOK: newest reading, without the raw vendor payload (Owner only). */
+/** Newest reading, without the raw vendor payload (Owner only, on the reading page). */
 export const latestReadingOf = (deviceId: TId) =>
-  readings().findOne(
-    { deviceId },
-    { sort: { recordedAt: -1 }, projection: { recordedAt: 1, metrics: 1, alerts: 1, source: 1 } },
-  );
+  SensorDataModel.findOne({ deviceId })
+    .sort({ recordedAt: -1 })
+    .select("recordedAt metrics alerts source animalId assignmentId")
+    .lean();
 
 /**
- * PLAN 7 HOOK: readings stored under one assignment. Decides two plan 6 rules:
+ * Readings stored under one assignment. Decides two plan 6 rules:
  * an assignment with a reading cannot be cancelled, and it cannot be removed before `lastRecordedAt`.
  */
 export const readingsOfAssignment = async (
@@ -93,28 +88,36 @@ export const readingsOfAssignment = async (
   session: ClientSession | null = null,
 ): Promise<{ count: number; lastRecordedAt: Date | null }> => {
   const [count, last] = await Promise.all([
-    readings().countDocuments({ assignmentId }, withSession(session)),
-    readings().findOne({ assignmentId }, { ...withSession(session), sort: { recordedAt: -1 }, projection: { recordedAt: 1 } }),
+    SensorDataModel.countDocuments({ assignmentId }).session(session),
+    SensorDataModel.findOne({ assignmentId }).sort({ recordedAt: -1 }).select("recordedAt").session(session).lean(),
   ]);
-  return { count, lastRecordedAt: (last?.recordedAt as Date | undefined) ?? null };
+  return { count, lastRecordedAt: last?.recordedAt ?? null };
 };
 
 /**
- * A successful machine sync: the only way to become Online. Maintenance is kept.
- * `batteryLevel` only when this reading is the newest one. False = unknown or deactivated device.
+ * Device state after stored readings (plan 7 §7.2). Only a machine source (API / MQTT /
+ * Bluetooth) sets `lastSyncAt` = server time and Online; manual entry and import never do.
+ * Maintenance is kept. `batteryLevel` is passed only when it comes from the device's newest
+ * reading. False = unknown or deactivated device, or nothing to change.
  */
 export const recordDeviceSync = async (
   deviceId: TId,
-  values: { batteryLevel?: number; firmwareVersion?: string } = {},
+  values: { source: string; batteryLevel?: number; firmwareVersion?: string },
 ): Promise<boolean> => {
   const { ONLINE, MAINTENANCE } = ConnectionStatuses;
+  const machine = MACHINE_SOURCES.includes(values.source);
+  if (!machine && values.batteryLevel === undefined) return false;
   const device = await DeviceModel.findOneAndUpdate(
     { _id: deviceId, isActive: true },
     [
       {
         $set: {
-          lastSyncAt: "$$NOW",
-          connectionStatus: { $cond: [{ $eq: ["$connectionStatus", MAINTENANCE] }, MAINTENANCE, ONLINE] },
+          ...(machine
+            ? {
+                lastSyncAt: "$$NOW",
+                connectionStatus: { $cond: [{ $eq: ["$connectionStatus", MAINTENANCE] }, MAINTENANCE, ONLINE] },
+              }
+            : {}),
           ...(values.batteryLevel === undefined
             ? {}
             : {
@@ -122,7 +125,7 @@ export const recordDeviceSync = async (
                   $cond: [{ $eq: ["$batteryType", BatteryTypes.NOT_APPLICABLE] }, null, values.batteryLevel],
                 },
               }),
-          ...(values.firmwareVersion ? { firmwareVersion: { $literal: values.firmwareVersion } } : {}),
+          ...(machine && values.firmwareVersion ? { firmwareVersion: { $literal: values.firmwareVersion } } : {}),
         },
       },
     ],

@@ -52,5 +52,11 @@ Derived per row: `warrantyState` (Active, Expiring ≤ 30 days, Expired, Unknown
 ## Jobs and hooks
 `device.connectivity` (hourly) and `device.warranty` (daily) need `JOBS_ENABLED=true`; see `notification.md`.
 `device.links.ts` reads DeviceAssignment through its model (current assignment, assigned/free filter, history count)
-and still holds the SensorData hooks (plan 7): until then `latestReading` is `null`, reading counts are 0 and
-`recordDeviceSync()` has no caller.
+and reads SensorData through `SensorDataModel` (plan 7, see `sensorData.md`): `latestReading`
+(`{ _id, recordedAt, metrics, alerts, source, animalId, assignmentId }` or `null`), the reading count behind the identity
+lock and the delete 409. `recordDeviceSync(deviceId, { source, batteryLevel?, firmwareVersion? })` is called by the
+sensor pipeline after every stored batch:
+- Only `API` / `MQTT` / `Bluetooth` set `lastSyncAt`, Online (Maintenance is kept) and the firmware.
+- Manual entry and CSV import never set Online.
+- `batteryLevel` is written only from the device's newest reading that carries one, so an out-of-order upload never
+  replaces a newer value.

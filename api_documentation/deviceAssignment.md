@@ -41,7 +41,7 @@ Also: `GET /farms/:farmId/devices/:id/assignments` (history of one device, newes
 - The device must be active, not in Maintenance and not Faulty; the animal must be Active (409).
 - Dates (`assignedDate`, `date`, `removedDate`) are ISO date-times or `YYYY-MM-DD`; blank = now; future = 400. A start is
   not before the device's `installationDate` and not before its last `removedDate` (no overlapping periods, 400). An end
-  is not before the start and not before the last reading of the period (plan 7 hook, 400).
+  is not before the start and not before the last reading of the period (400).
 - A device that was ever Removed cannot be a `New Installation` (400); the default reason is Reassignment for such a
   device and New Installation otherwise. `POST /` accepts New Installation, Reassignment, Testing only.
 - **Second device of the same type** on one animal: 409 whose message names `confirmSameType`; resend with
@@ -99,7 +99,13 @@ maintenance hand-off also write a `Device` row). Events: Device Assigned, Device
 Upgraded, Device Removed, Assignment Cancelled, Assignment Remarks Updated, Device Released (Animal …), Device Removed
 (Device Deactivated).
 
-## Plan 7 hooks
-`device.links.ts` reads the raw `sensordatas` collection: `readingsOfAssignment()` (count + last reading of one period,
-used by cancel and by the removal-date check) and `countReadingsOfDevice()` / `latestReadingOf()`. They return 0 / `null`
-until SensorData exists.
+## Readings (plan 7)
+`device.links.ts` reads `SensorDataModel` (see `sensorData.md`):
+- `readingsOfAssignment()` returns the count and last reading of one period.
+  - Cancel is refused once the period has readings (409).
+  - A removal, or the end of the old period in a reassign, dated before the last reading is refused (400).
+- `countReadingsOfDevice()` locks the device identity and blocks delete (409).
+- `latestReadingOf()` feeds `GET /devices/:id`.
+
+Each reading is matched to the period valid at its `recordedAt` (never a Cancelled one), not to today's assignment. A
+reading taken before a reassignment and uploaded after it therefore stays with the old animal.

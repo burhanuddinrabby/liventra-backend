@@ -787,7 +787,7 @@ const cancel = async (farmId: string, requester: string, ref: string, body: TPay
     if (!deadline || deadline.getTime() <= Date.now()) {
       throw conflict(`${current.assignmentNo} is older than ${CANCEL_WINDOW_HOURS} hours: remove it instead of cancelling it!`);
     }
-    //PLAN 7 HOOK: always 0 until SensorData exists
+    //a period that already carries readings is history, not a mistake
     const { count } = await readingsOfAssignment(current._id, session);
     if (count > 0) throw conflict(`${current.assignmentNo} already has readings: remove it instead of cancelling it!`);
     const remarks = appendRemark(current.remarks, `Cancelled: ${note}`);

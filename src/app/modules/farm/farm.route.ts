@@ -22,9 +22,11 @@ import { inventoryRouter, inventoryTransactionRouter } from "../inventory/invent
 import { auditLogRouter } from "../auditLog/auditLog.route.js";
 import { farmNotificationRouter } from "../notification/notification.route.js";
 import { deviceRouter } from "../device/device.route.js";
+import { sensorDataRouter } from "../sensorData/sensorData.route.js";
 import { animalDeviceRouter, deviceAssignmentRouter } from "../deviceAssignment/deviceAssignment.route.js";
 import { expenseRouter } from "../expense/expense.route.js";
 import { financeRouter, incomeRouter } from "../income/income.route.js";
+import { reportRouter } from "../report/report.route.js";
 
 const farmRouter = express.Router();
 const authenticatedRoles = [
@@ -108,10 +110,14 @@ farmRouter.use("/:farmId/devices", deviceRouter);
 // DeviceAssignment (Model 26); the animal's devices are mounted before the animal router so they are matched first
 farmRouter.use("/:farmId/device-assignments", deviceAssignmentRouter);
 farmRouter.use("/:farmId/animals/:animalId/devices", animalDeviceRouter);
+// SensorData (Model 27): readings, trends and alerts (phase A: manual entry + CSV import)
+farmRouter.use("/:farmId/sensor-data", sensorDataRouter);
 //finance: expenses, incomes and the profit / loss report
 farmRouter.use("/:farmId/expenses", expenseRouter);
 farmRouter.use("/:farmId/incomes", incomeRouter);
 farmRouter.use("/:farmId/finance", financeRouter);
+// Report (Model 28): async report generation, history and private downloads
+farmRouter.use("/:farmId/reports", reportRouter);
 
 // /api/v1/farms/:farmId/animals — Animal module (mergeParams gives it :farmId)
 farmRouter.use("/:farmId/animals", animalRouter);

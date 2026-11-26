@@ -4,3 +4,5 @@ node_modules
 dist
 # private finance receipts
 uploads/finance
+# generated report files (private, never served statically)
+uploads/reports
